@@ -21,6 +21,8 @@ Upload packages are built with `python3 tools/build.py`:
 OoFind adds a visual search panel to Odoo 16, 17, 18, 19 and later (Odoo 15 and older are not supported). Press Alt+Shift+F (or click the toolbar button) on any list, kanban, pivot, graph or form view.
 
 FILTERS: ONE CLICK, NO TYPING
+• Find a field or value: type "gemini" and pick "Customer: Gemini Furniture (13)"
+• Every field shows its top values as one-click chips
 • Value bars with record counts for status, selection, customer, salesperson, tags and yes/no fields
 • Counts update as you filter: each field's counts ignore its own filter, so you see what another value would give
 • Date presets (today, this week, last month, this quarter…), custom ranges and a clickable month histogram
@@ -46,6 +48,8 @@ PRESETS
 SAVED
 • Save the current search as a regular Odoo favorite (private, shared or default)
 • Recent searches
+
+The panel pushes Odoo's page aside so it hides nothing, and it takes Odoo's own colours and font (dark mode included).
 
 Everything OoFind applies becomes a normal Odoo search facet: you can remove it from the search bar, save it as a favorite, and it survives breadcrumbs. The panel collapses to a small floating button (with an active-filter count) after you filter or when you click outside it.
 

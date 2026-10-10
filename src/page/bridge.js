@@ -453,9 +453,25 @@
     return true;
   }
 
+  /** Replace the grouping with `specs` ("field" or "field:interval"), in that order. */
+  function setGroupBy({ specs }) {
+    const { sm } = requireView();
+    batch(sm, () => {
+      for (const facet of sm.facets) if (facet.type === "groupBy") sm.deactivateGroup(facet.groupId);
+      for (const spec of specs) {
+        const [fieldName, interval] = spec.split(":");
+        const existing = Object.values(sm.searchItems).find((i) => (i.type === "groupBy" || i.type === "dateGroupBy") && i.fieldName === fieldName);
+        if (existing && existing.type === "dateGroupBy") sm.toggleDateGroupBy(existing.id, interval || existing.defaultIntervalId);
+        else if (existing) sm.toggleSearchItem(existing.id);
+        else if (sm.searchViewFields[fieldName]) sm.createNewGroupBy(fieldName, interval ? { interval } : {});
+      }
+    });
+    return true;
+  }
+
   const COMMANDS = {
     context, apply, replaceAll, removeFacet, saveFavorite, applyFavorite, rowResId, watch,
-    clearAll, resetDefaults, searchItems, toggleItem, addGroupBy,
+    clearAll, resetDefaults, searchItems, toggleItem, addGroupBy, setGroupBy,
   };
 
   document.addEventListener("oofind:req", async (ev) => {

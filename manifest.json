@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "OoFind - Visual Search for Odoo",
   "short_name": "OoFind",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Visual filters with live counts, a domain workbench and 'why isn't this record here?' explanations for Odoo 16+.",
   "icons": {
     "16": "src/icons/icon-16.png",

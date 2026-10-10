@@ -17,7 +17,7 @@
   const api = globalThis.browser || globalThis.chrome;
   const D = globalThis.OofindDomain;
 
-  const K = { width: "oofind.width", pins: "oofind.pins", history: "oofind.history", tab: "oofind.tab", fab: "oofind.fab", keepOpen: "oofind.keepOpen" };
+  const K = { width: "oofind.width", pins: "oofind.pins", history: "oofind.history", tab: "oofind.tab", fab: "oofind.fab", keepOpen: "oofind.keepOpen", layout: "oofind.layout", hints: "oofind.hints" };
   const HISTORY_MAX = 50;
   const VALUE_LIMIT = 12;
   const EXPLAIN_MAX_NODES = 80;
@@ -200,7 +200,11 @@
     fields: {}, // model -> fields_get
     names: {}, // "model,id" -> display name
     total: null,
-    expanded: null, // field name open in the Filters tab
+    expanded: new Set(), // fields open in the Filters tab
+    query: "", // Filters tab search box
+    layout: "push", // "push" (Odoo narrows) | "overlay"
+    hints: {}, // dismissed hints
+    moreOptions: new Set(), // Presets / date cards showing all their options
     sel: {}, // "model|field" -> selection
     valueCache: new Map(), // key -> groups
     pins: {}, // model -> [field]
@@ -256,56 +260,205 @@
   styleEl.textContent = globalThis.OOFIND_CSS || "";
   shadow.append(styleEl);
 
+  // ---------------------------------------------------------------------------
+  // icons: small stroke icons drawn with DOM calls (no HTML parsing)
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const ICONS = {
+    refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+    pin: "M12 17v5M8 3h8l-1 6 3 3H6l3-3z",
+    minus: "M5 12h14",
+    x: "M6 6l12 12M18 6L6 18",
+    more: "M5 12h.01M12 12h.01M19 12h.01",
+    // (drawn with a thicker stroke, see icon())
+    filter: "M3 5h18l-7 8v6l-4 2v-8z",
+    build: "M4 6h7M15 6h5M4 12h3M11 12h9M4 18h11M19 18h1M11 4v4M7 10v4M15 16v4",
+    explain: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4M8.5 11l2 2 3.5-3.5",
+    presets: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
+    saved: "M6 3h12v18l-6-4-6 4z",
+    search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
+    clear: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6",
+    reset: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5",
+    star: "M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2-5.5-2.9-5.5 2.9 1-6.2L3 9.6l6.2-.9z",
+    chevron: "M9 6l6 6-6 6",
+    left: "M15 6l-6 6 6 6",
+    right: "M9 6l6 6-6 6",
+    check: "M5 12l5 5 9-10",
+    alert: "M12 8v5M12 16h.01M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
+    copy: "M9 9h11v11H9zM5 15V4h11",
+    calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+    tag: "M3 12V4h8l9 9-8 8zM7.5 7.5h.01",
+    link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+    list: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
+    toggle: "M8 7h8a5 5 0 0 1 0 10H8A5 5 0 0 1 8 7zM16 12h.01",
+    hash: "M5 9h14M5 15h14M10 4L8 20M16 4l-2 16",
+    text: "M4 6h16M4 12h16M4 18h10",
+    layout: "M3 4h18v16H3zM15 4v16",
+    group: "M4 5h16M7 12h13M10 19h10",
+  };
+
+  function icon(name, cls = "") {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("class", `i ${cls}`.trim());
+    if (name === "more") svg.style.strokeWidth = "3.5";
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", ICONS[name] || "");
+    svg.append(path);
+    return svg;
+  }
+
+  const TYPE_ICON = {
+    many2one: "link", many2many: "tag", one2many: "list", selection: "list", boolean: "toggle", date: "calendar", datetime: "calendar",
+    monetary: "hash", float: "hash", integer: "hash", char: "text", text: "text", html: "text",
+  };
+
   const TABS = [
-    ["filters", "Filters"],
-    ["builder", "Builder"],
-    ["explain", "Explain"],
-    ["presets", "Presets"],
-    ["saved", "Saved"],
+    ["filters", "Filter", "filter"],
+    ["builder", "Build", "build"],
+    ["explain", "Explain", "explain"],
+    ["presets", "Presets", "presets"],
+    ["saved", "Saved", "saved"],
   ];
 
   const whereEl = h("span", { class: "where" }, "Connecting…");
   const bodyEl = h("div", { class: "body" });
   const statusText = h("span", { class: "grow" }, "");
-  const statusEl = h("div", { class: "status", role: "status", "aria-live": "polite" }, statusText);
-  const tabsEl = h("nav", { class: "tabs", role: "tablist" },
-    TABS.map(([key, label]) => h("button", { type: "button", role: "tab", dataset: { tab: key }, onclick: () => setTab(key) }, label)));
+  const statusClose = h("button", { type: "button", "aria-label": "Dismiss", onclick: () => status("") }, icon("x", "sm"));
+  const statusEl = h("div", { class: "status empty-toast", role: "status", "aria-live": "polite" }, statusText, statusClose);
+  const tabBadge = h("span", { class: "tbadge", hidden: true });
+  const tabsEl = h("nav", { class: "tabs", role: "tablist", "aria-label": "OoFind sections" },
+    TABS.map(([key, label, ic]) => h("button", { type: "button", role: "tab", dataset: { tab: key }, title: label, onclick: () => setTab(key) },
+      icon(ic), h("span", { class: "tl" }, label), key === "filters" ? tabBadge : null)));
   const grip = h("div", { class: "grip", title: "Drag to resize" });
-  const keepBtn = h("button", { type: "button", "data-act": "keep", onclick: () => setKeepOpen(!state.keepOpen) }, "📌");
-  // funnel icon, built with DOM calls (no HTML parsing)
-  const SVG_NS = "http://www.w3.org/2000/svg";
-  const funnel = document.createElementNS(SVG_NS, "svg");
-  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "22", height: "22", "aria-hidden": "true" })) funnel.setAttribute(k, v);
-  const funnelPath = document.createElementNS(SVG_NS, "path");
-  funnelPath.setAttribute("fill", "currentColor");
-  funnelPath.setAttribute("d", "M3 4.5A1.5 1.5 0 0 1 4.5 3h15a1.5 1.5 0 0 1 1.15 2.46L14.5 12.9V19a1 1 0 0 1-.55.9l-3 1.5A1 1 0 0 1 9.5 20.5v-7.6L3.35 5.46A1.5 1.5 0 0 1 3 4.5Z");
-  funnel.append(funnelPath);
+  const keepBtn = h("button", { type: "button", class: "hbtn", "data-act": "keep", onclick: () => setKeepOpen(!state.keepOpen) }, icon("pin"));
+  const menuBtn = h("button", { type: "button", class: "hbtn", "data-act": "menu", title: "Settings", "aria-label": "Settings", "aria-haspopup": "menu", onclick: () => toggleMenu() }, icon("more"));
+  const menuEl = h("div", { class: "menu", role: "menu", hidden: true });
   const fabBadge = h("span", { class: "fab-badge", hidden: true });
-  const fab = h("button", { type: "button", class: "fab", hidden: true, "aria-label": "Open OoFind" }, funnel, fabBadge);
+  const fab = h("button", { type: "button", class: "fab", hidden: true, "aria-label": "Open OoFind" }, icon("filter"), fabBadge);
   const panel = h("div", { class: "panel", role: "complementary", "aria-label": "OoFind" },
     grip,
     h("header", null,
       h("span", { class: "logo" }, "Oo", h("b", null, "Find")),
       whereEl,
-      h("button", { type: "button", title: "Refresh", "aria-label": "Refresh", onclick: () => refresh(true) }, "⟳"),
+      h("button", { type: "button", class: "hbtn", title: "Refresh", "aria-label": "Refresh", onclick: () => refresh(true) }, icon("refresh")),
       keepBtn,
-      h("button", { type: "button", title: "Collapse to the floating button (Alt+Shift+F)", "aria-label": "Collapse", "data-act": "collapse", onclick: (ev) => collapse(ev.detail === 0) }, "–"),
-      h("button", { type: "button", title: "Close OoFind (toolbar button or Alt+Shift+F to reopen)", "aria-label": "Close", "data-act": "close", onclick: () => hide() }, "×")),
+      menuBtn,
+      h("button", { type: "button", class: "hbtn", title: "Collapse to the floating button (Alt+Shift+F)", "aria-label": "Collapse", "data-act": "collapse", onclick: (ev) => collapse(ev.detail === 0) }, icon("minus")),
+      h("button", { type: "button", class: "hbtn", title: "Close OoFind (toolbar button or Alt+Shift+F to reopen)", "aria-label": "Close", "data-act": "close", onclick: () => hide() }, icon("x"))),
+    menuEl,
     tabsEl,
     bodyEl,
     statusEl);
   shadow.append(panel, fab);
   document.documentElement.append(host);
 
+  // ---------------------------------------------------------------------------
+  // settings menu
+  function toggleMenu(force) {
+    const open = force === undefined ? menuEl.hidden : force;
+    menuEl.hidden = !open;
+    menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) return;
+    const item = (label, on, act) => h("button", { type: "button", role: "menuitemradio", "aria-checked": on ? "true" : "false", onclick: () => { act(); toggleMenu(false); } },
+      h("span", { class: "tick" }, on ? icon("check", "sm") : ""), label);
+    const version = (api.runtime && api.runtime.getManifest && api.runtime.getManifest().version) || "";
+    menuEl.replaceChildren(
+      h("div", { class: "mh" }, "Layout"),
+      item("Push the page aside", state.layout === "push", () => setLayout("push")),
+      item("Float over the page", state.layout === "overlay", () => setLayout("overlay")),
+      h("div", { class: "mh" }, "After filtering"),
+      item("Collapse to the button", !state.keepOpen, () => setKeepOpen(false)),
+      item("Keep the panel open", state.keepOpen, () => setKeepOpen(true)),
+      h("div", { class: "about" }, `OoFind ${version} · Alt+Shift+F toggles · Esc collapses`));
+    const first = menuEl.querySelector("button");
+    if (first) first.focus();
+  }
+  shadow.addEventListener("pointerdown", (ev) => {
+    if (!menuEl.hidden && !ev.composedPath().some((n) => n === menuEl || n === menuBtn)) toggleMenu(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // native look: read Odoo's colours and font from the page
+  function parseColor(c) {
+    const m = (c || "").match(/[\d.]+/g);
+    if (!m || m.length < 3) return null;
+    const a = m.length >= 4 ? Number(m[3]) : 1;
+    return a === 0 ? null : [Number(m[0]), Number(m[1]), Number(m[2]), a];
+  }
+
+  const rgb = (c) => `rgb(${c.slice(0, 3).map((v) => Math.round(v)).join(", ")})`;
+  const mix = (a, b, t) => [0, 1, 2].map((k) => a[k] * t + b[k] * (1 - t));
+  const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+
+  function probe(cls, tag = "span") {
+    const el = document.createElement(tag);
+    el.className = cls;
+    el.textContent = "x";
+    el.style.cssText = "position:absolute;left:-9999px;top:-9999px;visibility:hidden";
+    document.body.append(el);
+    const cs = getComputedStyle(el);
+    const out = { bg: cs.backgroundColor, fg: cs.color, border: cs.borderTopColor, font: cs.fontFamily, size: cs.fontSize };
+    el.remove();
+    return out;
+  }
+
+  let themeKey = "";
   function applyTheme() {
-    // Follow Odoo's own theme (its dark mode is a separate asset bundle), else the OS.
-    const bg = getComputedStyle(document.body).backgroundColor.match(/\d+/g);
-    let dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    if (bg && bg.length >= 3 && !(bg.length === 4 && Number(bg[3]) === 0)) {
-      const [r, g, b] = bg.map(Number);
-      dark = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.45;
+    let page;
+    try {
+      const body = getComputedStyle(document.body);
+      page = { bg: body.backgroundColor, fg: body.color, font: body.fontFamily, size: body.fontSize, primary: probe("btn btn-primary", "button"), link: probe("", "a"), card: probe("card") };
+    } catch {
+      return;
     }
+    const key = JSON.stringify(page);
+    if (key === themeKey) return;
+    themeKey = key;
+    const bg = parseColor(page.card.bg) || parseColor(page.bg);
+    const fg = parseColor(page.fg);
+    const dark = bg ? lum(bg) < 0.45 : matchMedia("(prefers-color-scheme: dark)").matches;
     host.dataset.theme = dark ? "dark" : "light";
+    const vars = {};
+    if (bg && fg) {
+      vars["--bg"] = rgb(bg);
+      vars["--fg"] = rgb(fg);
+      vars["--bg-2"] = rgb(mix(fg, bg, dark ? 0.05 : 0.025));
+      vars["--bg-3"] = rgb(mix(fg, bg, dark ? 0.1 : 0.06));
+      vars["--fg-2"] = rgb(mix(fg, bg, 0.72));
+      vars["--fg-3"] = rgb(mix(fg, bg, 0.5));
+      vars["--border"] = rgb(mix(fg, bg, dark ? 0.18 : 0.13));
+      vars["--meter"] = rgb(mix(fg, bg, dark ? 0.24 : 0.16));
+    }
+    const accent = parseColor(page.primary.bg);
+    if (accent && bg) {
+      vars["--accent"] = rgb(accent);
+      vars["--accent-fg"] = page.primary.fg;
+      vars["--accent-soft"] = rgb(mix(accent, bg, dark ? 0.22 : 0.1));
+      vars["--accent-line"] = rgb(mix(accent, bg, 0.4));
+    }
+    const link = parseColor(page.link.fg);
+    if (link) vars["--link"] = rgb(link);
+    if (page.font) vars["--font"] = page.font;
+    for (const [k, v] of Object.entries(vars)) host.style.setProperty(k, v);
+  }
+
+  // ---------------------------------------------------------------------------
+  // push mode: Odoo's page narrows so the panel hides nothing
+  const pushStyle = document.createElement("style");
+  pushStyle.textContent = "html.oofind-push body { width: auto !important; margin-right: var(--oofind-push, 0px) !important; transition: margin-right .16s ease-out; }";
+  function setPush() {
+    const on = state.mode === "expanded" && state.layout === "push";
+    if (!pushStyle.isConnected) (document.head || document.documentElement).append(pushStyle);
+    document.documentElement.style.setProperty("--oofind-push", `${on ? panel.getBoundingClientRect().width || parseInt(panel.style.width, 10) || 360 : 0}px`);
+    document.documentElement.classList.toggle("oofind-push", on);
+    panel.classList.toggle("push", on);
+  }
+
+  function setLayout(layout) {
+    state.layout = layout;
+    store.set(K.layout, layout);
+    setPush();
   }
 
   // resize by dragging the left edge
@@ -314,8 +467,9 @@
     grip.setPointerCapture(ev.pointerId);
     grip.classList.add("on");
     const move = (e) => {
-      const w = Math.min(Math.max(window.innerWidth - e.clientX, 320), window.innerWidth * 0.92);
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, 300), window.innerWidth * 0.92);
       panel.style.width = `${w}px`;
+      setPush();
     };
     const up = () => {
       grip.removeEventListener("pointermove", move);
@@ -327,11 +481,13 @@
   });
 
   let statusTimer;
+  /** Toast at the bottom of the panel: "ok" messages fade after a few seconds, errors stay until dismissed. */
   function status(text, kind = "") {
     statusText.textContent = text || "";
-    statusEl.className = `status ${kind}`;
+    statusEl.className = `status ${kind}${text ? "" : " empty-toast"}`;
+    statusEl.setAttribute("role", kind === "err" ? "alert" : "status");
     clearTimeout(statusTimer);
-    if (kind === "ok") statusTimer = setTimeout(() => status(""), 4000);
+    if (text && kind !== "err") statusTimer = setTimeout(() => status(""), 3500);
   }
 
   function fail(e) {
@@ -356,6 +512,8 @@
     fab.hidden = mode !== "collapsed";
     state.collapseOnLeave = false;
     if (mode !== "expanded" && state.explain.picking) stopPicking();
+    if (mode !== "expanded") toggleMenu(false);
+    setPush();
     if ((was === "hidden") !== (mode === "hidden")) bridge("watch", { on: mode !== "hidden" }).catch(() => {});
   }
 
@@ -379,6 +537,12 @@
   function toggle() {
     if (state.mode === "expanded") collapse();
     else expand();
+  }
+
+  function dismissHint(key) {
+    state.hints[key] = true;
+    store.set(K.hints, state.hints);
+    render();
   }
 
   function setKeepOpen(on) {
@@ -464,7 +628,10 @@
       expand();
     }
   });
-  window.addEventListener("resize", () => { fabPos = placeFab(fabPos); });
+  window.addEventListener("resize", () => {
+    fabPos = placeFab(fabPos);
+    setPush();
+  });
 
   // ---------------------------------------------------------------------------
   // data loading
@@ -535,7 +702,7 @@
         const prevModel = state.lastModel;
         state.lastModel = ctx.resModel;
         if (prevModel !== ctx.resModel) {
-          state.expanded = null;
+          state.expanded = new Set();
           state.builder = null;
           state.picker = null;
           state.moreOpen = false;
@@ -551,7 +718,7 @@
         await fieldsOf(ctx.resModel);
         syncSelections();
         state.valueCache.clear();
-        whereEl.textContent = `${ctx.displayName || ctx.resModel} · ${ctx.resModel} · ${ctx.viewType}`;
+        whereEl.textContent = ctx.displayName || ctx.resModel;
         whereEl.title = `${ctx.displayName || ""}\nModel: ${ctx.resModel}\nView: ${ctx.viewType}\nDatabase: ${(state.session && state.session.db) || ""}`;
         if (force) render();
         else renderSoon();
@@ -627,10 +794,17 @@
       b.setAttribute("aria-selected", on ? "true" : "false");
     }
     const ctx = state.ctx;
+    const nFilters = ctx && ctx.available ? ctx.facets.filter((f) => f.type !== "groupBy").length : 0;
+    tabBadge.hidden = !nFilters;
+    tabBadge.textContent = String(nFilters);
     const scroll = bodyEl.scrollTop;
+    // a redraw must not steal focus: remember the focused field (by its aria-label) and its caret
+    const active = shadow.activeElement;
+    const keep = active && bodyEl.contains(active) && active.getAttribute("aria-label") && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
+      ? { label: active.getAttribute("aria-label"), start: active.selectionStart, end: active.selectionEnd } : null;
     bodyEl.replaceChildren();
     if (!ctx) {
-      bodyEl.append(h("div", { class: "empty" }, h("span", { class: "spin" })));
+      bodyEl.append(skeleton());
       return;
     }
     if (!ctx.available) {
@@ -640,10 +814,25 @@
     const view = { filters: renderFilters, builder: renderBuilder, explain: renderExplain, presets: renderPresets, saved: renderSaved }[state.tab];
     bodyEl.append(view());
     bodyEl.scrollTop = scroll;
+    if (keep) {
+      const again = [...bodyEl.querySelectorAll("input, textarea")].find((el) => el.getAttribute("aria-label") === keep.label);
+      if (again) {
+        again.focus({ preventScroll: true });
+        try {
+          again.setSelectionRange(keep.start, keep.end);
+        } catch {
+          /* not a text input */
+        }
+      }
+    }
+  }
+
+  function skeleton() {
+    return h("div", { class: "skel", "aria-label": "Loading" }, h("i"), h("i"), h("i"));
   }
 
   // ===========================================================================
-  // Filters tab: facets + field cards with value bars, presets, histograms
+  // Filters tab: summary, search box, field cards with previews, value rows, dates
   // ===========================================================================
   function selKey(field) {
     return `${state.ctx.resModel}|${field}`;
@@ -688,11 +877,11 @@
       h("button", {
         type: "button", class: `btn${compact ? " sm" : ""}`, "data-act": "clear-all", disabled: !any,
         title: "Remove every filter and group-by: show all records", onclick: clearAll,
-      }, "✕ Clear all"),
+      }, icon("clear", "sm"), "Clear all"),
       h("button", {
         type: "button", class: `btn${compact ? " sm" : ""}`, "data-act": "reset",
         title: "Back to what this menu shows when you open it (its default filters, group-bys or default favorite)", onclick: resetDefaults,
-      }, "↺ Reset to default"));
+      }, icon("reset", "sm"), "Reset to default"));
   }
 
   async function clearAll() {
@@ -725,22 +914,49 @@
     }
   }
 
-  function renderFilters() {
+  function filterFields() {
     const ctx = state.ctx;
     const fields = state.fields[ctx.resModel] || {};
-    const frag = h("div");
-    frag.append(h("h3", null, "Active search", h("span", { class: "count", "data-total": "" }, state.total === null ? "" : `${fmtNum(state.total)} records`)));
-    frag.append(renderFacets());
-    frag.append(resetButtons(true));
-
     const ranked = D.rankFields(fields, ctx.searchFields);
     const pins = state.pins[ctx.resModel] || [];
     const pinned = pins.filter((n) => fields[n]);
     const auto = ranked.filter((r) => !pinned.includes(r.name)).slice(0, Math.max(0, 9 - pinned.length)).map((r) => r.name);
     const active = Object.keys(state.sel).filter((k) => k.startsWith(`${ctx.resModel}|`)).map((k) => k.split("|")[1]);
     const shown = [...new Set([...pinned, ...active, ...auto])].filter((n) => fields[n]);
+    return { fields, ranked, pinned, shown };
+  }
 
-    frag.append(h("h3", null, "Filter by"));
+  function renderFilters() {
+    const ctx = state.ctx;
+    const { fields, ranked, pinned, shown } = filterFields();
+    const frag = h("div");
+    const n = ctx.facets.filter((f) => f.type !== "groupBy").length;
+
+    // one summary line instead of repeating Odoo's search bar
+    frag.append(h("div", { class: "sumbar" },
+      h("span", { class: "st" }, h("b", null, n ? `${n} filter${n === 1 ? "" : "s"}` : "No filters"), " · ",
+        h("span", { "data-total": "" }, state.total === null ? "…" : `${fmtNum(state.total)} records`)),
+      resetButtons(true)));
+
+    // search box: fields and values in one place
+    const omni = h("input", { type: "search", placeholder: "Find a field or value…", value: state.query, "aria-label": "Find a field or value", "data-omni": "" });
+    const hits = h("div", { class: "hits", role: "listbox", "aria-label": "Matches" });
+    frag.append(h("div", { class: "omni" }, icon("search"), omni), hits);
+    const runSearch = debounce(() => searchEverywhere(omni.value.trim(), hits, fields, ranked), 250);
+    omni.addEventListener("input", () => { state.query = omni.value; runSearch(); });
+    omni.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown") {
+        const first = hits.querySelector(".hit");
+        if (first) { ev.preventDefault(); first.focus(); }
+      } else if (ev.key === "Escape" && omni.value) {
+        ev.stopPropagation();
+        omni.value = "";
+        state.query = "";
+        hits.replaceChildren();
+      }
+    });
+    if (state.query) searchEverywhere(state.query, hits, fields, ranked);
+
     for (const name of shown) frag.append(renderCard(name, fields[name], pinned.includes(name)));
 
     const rest = ranked.filter((r) => !shown.includes(r.name));
@@ -756,7 +972,7 @@
             .filter((r) => !q || (r.field.string || "").toLowerCase().includes(q) || r.name.includes(q))
             .slice(0, 60)
             .map((r) => h("li", { onclick: () => pin(r.name, true) },
-              h("span", null, r.field.string || r.name), h("span", { class: "tech" }, r.name))));
+              icon(TYPE_ICON[r.field.type] || "text", "sm"), h("span", null, r.field.string || r.name), h("span", { class: "tech" }, r.name))));
         };
         input.addEventListener("input", fill);
         fill();
@@ -768,49 +984,147 @@
     return frag;
   }
 
+  /** Search box: matching fields, and matching values (with counts) in the most useful fields. */
+  async function searchEverywhere(q, hitsEl, fields, ranked) {
+    if (!q) {
+      hitsEl.replaceChildren();
+      return;
+    }
+    const ql = q.toLowerCase();
+    const rows = [];
+    const fieldHits = ranked.filter((r) => (r.field.string || r.name).toLowerCase().includes(ql)).slice(0, 4);
+    for (const r of fieldHits) {
+      rows.push(h("button", { type: "button", class: "hit", role: "option", onclick: () => openField(r.name) },
+        icon(TYPE_ICON[r.field.type] || "text", "sm"), h("span", { class: "hv" }, r.field.string || r.name), h("span", { class: "hf" }, "field")));
+    }
+    hitsEl.replaceChildren(...rows, h("div", { class: "skel" }, h("i"), h("i")));
+    const candidates = ranked.filter((r) => ["selection", "many2one", "many2many", "char"].includes(r.field.type) && r.field.groupable !== false).slice(0, 6);
+    const valueHits = [];
+    await Promise.all(candidates.map(async (r) => {
+      const name = r.name;
+      try {
+        let groupsFound;
+        if (r.field.type === "selection") {
+          const all = await groups(name, r.field, name, {});
+          groupsFound = all.filter((g) => groupLabel(g[name], r.field).toLowerCase().includes(ql));
+        } else {
+          groupsFound = await readGroup(state.ctx.resModel, D.andDomains(countDomain(name), [[name, "ilike", q]]), { groupby: [name], order: "__count desc", limit: 4 });
+        }
+        for (const g of groupsFound.slice(0, 4)) {
+          valueHits.push({ name, field: r.field, row: { id: groupId(g[name]), label: groupLabel(g[name], r.field), count: g.__count, domain: g.__extra_domain } });
+        }
+      } catch {
+        /* a field that can't be grouped: skip it */
+      }
+    }));
+    if (state.query.trim() !== q) return; // a newer search is running
+    valueHits.sort((a, b) => b.row.count - a.row.count);
+    const valueRows = valueHits.slice(0, 10).map(({ name, field, row }) => {
+      const sel = state.sel[selKey(name)];
+      const on = !!(sel && sel.values && sel.values.some((v) => v.id === row.id));
+      return h("button", { type: "button", class: `hit${on ? " on" : ""}`, role: "option", "aria-selected": on ? "true" : "false",
+        onclick: () => toggleValue(name, field, row) },
+      icon(on ? "check" : TYPE_ICON[field.type] || "text", "sm"), h("span", { class: "hf" }, `${field.string}:`), h("span", { class: "hv" }, row.label), h("span", { class: "num" }, fmtNum(row.count)));
+    });
+    const out = [...rows, ...valueRows];
+    if (!out.length) out.push(h("p", { class: "muted small", style: "margin:2px 8px" }, `Nothing matches "${q}" in the current results.`));
+    hitsEl.replaceChildren(...out);
+    // arrow keys move through the matches
+    hitsEl.onkeydown = (ev) => {
+      const items = [...hitsEl.querySelectorAll(".hit")];
+      const k = items.indexOf(shadow.activeElement);
+      if (ev.key === "ArrowDown" && k < items.length - 1) { ev.preventDefault(); items[k + 1].focus(); }
+      if (ev.key === "ArrowUp") { ev.preventDefault(); (k > 0 ? items[k - 1] : bodyEl.querySelector("[data-omni]")).focus(); }
+      // activate explicitly: browsers differ on synthesized Enter/Space for buttons
+      if ((ev.key === "Enter" || ev.key === " ") && k >= 0) { ev.preventDefault(); items[k].click(); }
+    };
+  }
+
+  function openField(name) {
+    state.expanded.add(name);
+    state.query = "";
+    render();
+    const card = [...bodyEl.querySelectorAll(".card")].find((c) => c.dataset.field === name);
+    if (card) {
+      card.scrollIntoView({ block: "nearest" });
+      const head = card.querySelector(".card-head");
+      if (head) head.focus();
+    }
+  }
+
   async function pin(name, on) {
     const model = state.ctx.resModel;
     const list = (state.pins[model] || []).filter((n) => n !== name);
     if (on) list.push(name);
     state.pins[model] = list;
     state.moreOpen = false;
-    if (on) state.expanded = name;
+    if (on) state.expanded.add(name);
     await store.set(K.pins, state.pins);
     render();
   }
 
-  const TYPE_BADGE = { many2one: "link", many2many: "tags", one2many: "list", selection: "choice", boolean: "yes/no", date: "date", datetime: "date", monetary: "amount", float: "number", integer: "number", char: "text", text: "text", html: "text" };
-
-  function summary(name, field) {
+  function summary(name) {
     const s = state.sel[selKey(name)];
-    if (!s) return "";
-    return s.label || "";
+    return s ? s.label || "" : "";
   }
 
+  const VALUE_TYPES = new Set(["selection", "many2one", "many2many", "boolean"]);
+  const QUICK_DATES = ["today", "this_week", "this_month", "this_year", "last_30"];
+
   function renderCard(name, field, pinned) {
-    const open = state.expanded === name;
-    const sum = summary(name, field);
-    const card = h("div", { class: `card${open ? " open" : ""}${sum ? " on" : ""}` });
+    const open = state.expanded.has(name);
+    const sum = summary(name);
+    const card = h("div", { class: `card${open ? " open" : ""}${sum ? " on" : ""}`, dataset: { field: name } });
     const head = h("div", {
       class: "card-head", tabindex: "0", role: "button", "aria-expanded": open ? "true" : "false",
-      onclick: () => { state.expanded = open ? null : name; render(); },
+      onclick: () => { if (open) state.expanded.delete(name); else state.expanded.add(name); render(); },
       onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); head.click(); } },
     },
-    h("span", { class: "chev" }, "▶"),
+    h("span", { class: "chev" }, icon("chevron", "sm")),
+    h("span", { class: "ti", title: field.type }, icon(TYPE_ICON[field.type] || "text", "sm")),
     h("span", { class: "card-title", title: `${field.string} (${name})` }, field.string || name),
-    h("span", { class: "badge" }, TYPE_BADGE[field.type] || field.type),
     h("span", { class: `card-sum${sum ? "" : " none"}` }, sum || ""),
     h("button", {
       type: "button", class: `pin${pinned ? " on" : ""}`, title: pinned ? "Unpin" : "Pin to the top for this model",
-      "aria-label": pinned ? "Unpin" : "Pin", onclick: (ev) => { ev.stopPropagation(); pin(name, !pinned); },
-    }, pinned ? "★" : "☆"));
+      "aria-label": pinned ? `Unpin ${field.string}` : `Pin ${field.string}`, onclick: (ev) => { ev.stopPropagation(); pin(name, !pinned); },
+    }, icon("star", `sm${pinned ? " fill" : ""}`)));
     card.append(head);
     if (open) {
       const bodyDiv = h("div", { class: "card-body" });
       card.append(bodyDiv);
       fillCard(bodyDiv, name, field);
+    } else {
+      const prev = preview(name, field);
+      if (prev) card.append(prev);
     }
     return card;
+  }
+
+  /** Collapsed cards show their top values (or common periods) as one-click chips. */
+  function preview(name, field) {
+    const sel = state.sel[selKey(name)];
+    if (D.DATES.has(field.type)) {
+      return h("div", { class: "preview" }, QUICK_DATES.slice(0, 4).map((key) => {
+        const on = sel && sel.preset === key;
+        return h("button", { type: "button", class: `chip${on ? " on" : ""}`, onclick: () => setDatePreset(name, field, key, on) }, D.presetLabel(key));
+      }));
+    }
+    if (!(VALUE_TYPES.has(field.type) || (field.type === "char" && field.groupable !== false))) return null;
+    const box = h("div", { class: "preview" });
+    const chosen = new Map(((sel && sel.values) || []).map((v) => [v.id, v]));
+    const relational = D.RELATIONAL.has(field.type) || field.type === "char";
+    groups(name, field, name, { limit: relational ? VALUE_LIMIT : null }).then((res) => {
+      const rows = res.map((g) => ({ id: groupId(g[name]), label: groupLabel(g[name], field), count: g.__count, domain: g.__extra_domain }));
+      const top = rows.filter((r) => !chosen.has(r.id)).slice(0, 3);
+      const picked = [...chosen.values()].map((v) => ({ ...v, count: (rows.find((r) => r.id === v.id) || {}).count }));
+      box.replaceChildren(...[...picked, ...top].map((r) => {
+        const on = chosen.has(r.id);
+        return h("button", { type: "button", class: `chip${on ? " on" : ""}`, title: r.label, "aria-pressed": on ? "true" : "false", onclick: () => toggleValue(name, field, r) },
+          r.label.length > 22 ? `${r.label.slice(0, 21)}…` : r.label, r.count === undefined ? "" : h("span", { class: "n" }, fmtNum(r.count)));
+      }));
+      if (!box.children.length) box.remove();
+    }).catch(() => box.remove());
+    return box;
   }
 
   function fillCard(el, name, field) {
@@ -826,7 +1140,7 @@
     }
     if (state.sel[selKey(name)]) {
       el.append(h("div", { class: "row end", style: "margin-top:8px" },
-        h("button", { type: "button", class: "btn sm ghost", onclick: () => setSelection(name, null) }, "Clear")));
+        h("button", { type: "button", class: "btn sm ghost", "data-act": "clear-field", onclick: () => setSelection(name, null) }, icon("clear", "sm"), `Clear ${field.string}`)));
     }
   }
 
@@ -862,7 +1176,7 @@
   }
 
   function renderValues(el, name, field) {
-    const list = h("div", { class: "vals" }, h("span", { class: "spin" }));
+    const list = h("div", { class: "vals" }, skeleton());
     const relational = D.RELATIONAL.has(field.type);
     let search = null;
     if (relational || field.type === "char") {
@@ -881,7 +1195,7 @@
         return h("button", {
           type: "button", class: `val${on ? " on" : ""}${r.count === 0 ? " zero" : ""}`, role: "checkbox", "aria-checked": on ? "true" : "false",
           title: r.label, onclick: () => toggleValue(name, field, r),
-        }, h("span", { class: "fill", style: `width:${pct}%` }), h("span", { class: "box" }, on ? "✓" : ""), h("span", { class: "lbl" }, r.label),
+        }, h("span", { class: "fill", style: `width:${pct}%` }), h("span", { class: "box" }, on ? icon("check") : ""), h("span", { class: "lbl" }, r.label),
         h("span", { class: "num" }, r.count === null ? "" : fmtNum(r.count)));
       }), note ? h("span", { class: "muted small", style: "padding:4px 8px" }, note) : "");
       if (!rows.length) list.append(h("span", { class: "muted small", style: "padding:4px 8px" }, "No values in the current results."));
@@ -959,14 +1273,21 @@
     // the bridge's "changed" event refreshes the panel
   }
 
+  function setDatePreset(name, field, key, on) {
+    if (on) return setSelection(name, null);
+    const r = D.datePreset(key);
+    const label = D.presetLabel(key);
+    setSelection(name, { kind: "date", preset: key, label, facet: `${field.string}: ${label}`, domain: D.dateRangeDomain(name, field.type, r.from, r.to) });
+  }
+
   function renderDates(el, name, field) {
     const sel = state.sel[selKey(name)] || {};
-    el.append(h("div", { class: "chips" }, D.PRESETS.map(([key, label]) =>
-      h("button", { type: "button", class: `chip${sel.preset === key ? " on" : ""}`, onclick: () => {
-        if (sel.preset === key) return setSelection(name, null);
-        const r = D.datePreset(key);
-        setSelection(name, { kind: "date", preset: key, label, facet: `${field.string}: ${label}`, domain: D.dateRangeDomain(name, field.type, r.from, r.to) });
-      } }, label))));
+    const moreKey = `date:${name}`;
+    const all = state.moreOptions.has(moreKey) || (sel.preset && !QUICK_DATES.includes(sel.preset));
+    const keys = all ? D.PRESETS.map(([k]) => k) : QUICK_DATES;
+    el.append(h("div", { class: "chips" }, keys.map((key) =>
+      h("button", { type: "button", class: `chip${sel.preset === key ? " on" : ""}`, onclick: () => setDatePreset(name, field, key, sel.preset === key) }, D.presetLabel(key))),
+    all ? null : h("button", { type: "button", class: "chip more", onclick: () => { state.moreOptions.add(moreKey); render(); } }, "More periods…")));
     const from = h("input", { type: "date", value: sel.from || "", "aria-label": "From" });
     const to = h("input", { type: "date", value: sel.to || "", "aria-label": "To" });
     const applyRange = () => {
@@ -976,7 +1297,7 @@
     };
     el.append(h("div", { class: "row", style: "margin-top:10px" }, from, "→", to, h("button", { type: "button", class: "btn sm", onclick: applyRange }, "Apply")));
     // month histogram
-    const hist = h("div", { class: "hist", "aria-label": "Records per month" }, h("span", { class: "spin" }));
+    const hist = h("div", { class: "hist", "aria-label": "Records per month" });
     const labels = h("div", { class: "hist-labels" });
     el.append(hist, labels);
     groups(name, field, `${name}:month`, { order: `${name}:month asc` }).then((res) => {
@@ -1001,7 +1322,7 @@
 
   function renderRange(el, name, field) {
     const sel = state.sel[selKey(name)] || {};
-    const info = h("div", { class: "muted small", style: "margin-top:6px" }, h("span", { class: "spin" }));
+    const info = h("div", { class: "muted small", style: "margin-top:6px" }, "…");
     const min = h("input", { type: "number", step: "any", placeholder: "min", value: sel.min ?? "", "aria-label": "Minimum" });
     const max = h("input", { type: "number", step: "any", placeholder: "max", value: sel.max ?? "", "aria-label": "Maximum" });
     const apply = () => {
@@ -1153,15 +1474,13 @@
       return frag;
     }
     const b = state.builder;
-    frag.append(h("div", { class: "row" },
+    frag.append(h("div", { class: "bhead" },
       h("span", { class: "bigcount", "data-bcount": "" }, "…"), h("span", { class: "muted" }, "records match"),
       h("span", { class: "spacer" }),
       h("button", { type: "button", class: "btn sm ghost", title: "Load the current search", onclick: async () => { await startBuilder(true); render(); } }, "Load search"),
       h("button", { type: "button", class: "btn sm ghost", onclick: async () => { await startBuilder(false); render(); } }, "Reset")));
     frag.append(renderGroup(b.root, null));
     frag.append(h("div", { class: "summary", "data-bsummary": "" }));
-    frag.append(h("h3", null, "Python domain", h("span", { class: "count" }, h("button", { type: "button", class: "btn sm ghost", onclick: () => copy(D.formatDomain(builderDomain()), "Python domain") }, "Copy"),
-      h("button", { type: "button", class: "btn sm ghost", onclick: () => copy(JSON.stringify(builderDomain()), "JSON domain") }, "Copy JSON"))));
     const ta = h("textarea", { class: "code", spellcheck: "false", "aria-label": "Domain as Python", "data-btext": "" });
     const err = h("div", { class: "err-text", "data-berr": "" });
     ta.addEventListener("input", debounce(async () => {
@@ -1185,10 +1504,18 @@
         b.textErr = e.message;
         err.textContent = e.message;
         ta.classList.add("bad");
+        box.open = true;
       }
     }, 450));
-    frag.append(ta, err);
-    frag.append(h("div", { class: "row", style: "margin-top:12px" },
+    // the Python domain is for power users: folded away, with Copy always at hand
+    const box = h("details", { class: "domain-box", open: b.showText || b.textErr ? "" : null },
+      h("summary", null, h("span", { class: "chev" }, icon("chevron", "sm")), "Python domain", h("span", { class: "spacer" }),
+        h("button", { type: "button", class: "btn sm link", onclick: (ev) => { ev.preventDefault(); copy(D.formatDomain(builderDomain()), "Python domain"); } }, icon("copy", "sm"), "Copy"),
+        h("button", { type: "button", class: "btn sm link", onclick: (ev) => { ev.preventDefault(); copy(JSON.stringify(builderDomain()), "JSON domain"); } }, "JSON")),
+      h("div", { class: "inner" }, ta, err));
+    box.addEventListener("toggle", () => { b.showText = box.open; });
+    frag.append(box);
+    frag.append(h("div", { class: "actions" },
       h("button", { type: "button", class: "btn primary", title: "Add this as one filter next to the current search", onclick: () => applyBuilder(false) }, "Add as filter"),
       h("button", { type: "button", class: "btn", title: "Replace every filter in the search bar with this one (group-bys stay)", onclick: () => applyBuilder(true) }, "Replace search"),
       ctx.shareQuery !== null ? h("button", { type: "button", class: "btn ghost", title: "Link that opens this menu with this filter", onclick: copyLink }, "Copy link") : null));
@@ -1265,7 +1592,7 @@
     opSel.value = g.op;
     opSel.addEventListener("change", () => { g.op = opSel.value; rerenderBuilder(); });
     box.append(h("div", { class: "group-head" }, "Match", opSel, "of these conditions", h("span", { class: "spacer" }),
-      parent ? h("button", { type: "button", class: "x", title: "Remove group", "aria-label": "Remove group", onclick: () => { removeNode(parent, g); } }, "×") : null));
+      parent ? h("button", { type: "button", class: "x", title: "Remove group", "aria-label": "Remove group", onclick: () => { removeNode(parent, g); } }, icon("x", "sm")) : null));
     for (const child of g.children) {
       if (child.kind === "group") box.append(renderGroup(child, g));
       else if (child.kind === "not") box.append(renderNot(child, g));
@@ -1279,7 +1606,7 @@
 
   function renderNot(n, parent) {
     const box = h("div", { class: "group" }, h("div", { class: "group-head" }, "NOT", h("span", { class: "spacer" }),
-      h("button", { type: "button", class: "x", title: "Remove", onclick: () => removeNode(parent, n) }, "×")));
+      h("button", { type: "button", class: "x", title: "Remove", "aria-label": "Remove", onclick: () => removeNode(parent, n) }, icon("x", "sm"))));
     const child = n.child;
     if (child.kind === "group") box.append(renderGroup(child, null));
     else box.append(renderCond(child, null));
@@ -1293,12 +1620,18 @@
     rerenderBuilder();
   }
 
+  const SHORT_OPS = {
+    in: "is", "not in": "is not", "=": "=", "!=": "≠", ">": ">", ">=": "≥", "<": "<", "<=": "≤", between: "between",
+    set: "is set", not_set: "is not set", is_true: "is true", is_false: "is false", within: "within", ilike: "contains", "not ilike": "excludes",
+  };
+
   function renderCond(n, parent) {
     const c = n.cond;
     const model = state.ctx.resModel;
     const row = h("div", { class: `cond${c.raw ? " raw" : ""}` });
+    const main = h("div", { class: "cond-main" });
     const label = c.path ? D.fieldLabel(c.path, state.fields, model) : "Choose a field…";
-    row.append(h("button", { type: "button", class: `path${c.path ? "" : " unset"}`, title: c.path || "", onclick: () => openPicker(n) }, label));
+    main.append(h("button", { type: "button", class: `path${c.path ? "" : " unset"}`, title: c.path || "", onclick: () => openPicker(n) }, label));
     if (c.raw) {
       // a leaf the visual editor doesn't cover: edit its parts as Python
       const op = h("input", { value: c.raw[1], style: "width:90px", "aria-label": "Operator" });
@@ -1314,11 +1647,11 @@
       };
       op.addEventListener("change", upd);
       val.addEventListener("change", upd);
-      row.append(op, val);
+      main.append(op, val);
     } else if (c.path) {
       const ops = D.operatorsFor(c.type);
       if (!c.op || !ops.includes(c.op)) c.op = ops[0];
-      const opSel = h("select", { "aria-label": "Operator" }, ops.map((o) => h("option", { value: o }, D.opLabel(o))));
+      const opSel = h("select", { "aria-label": "Operator", title: D.opLabel(c.op) }, ops.map((o) => h("option", { value: o, title: D.opLabel(o) }, SHORT_OPS[o] || D.opLabel(o))));
       opSel.value = c.op;
       opSel.addEventListener("change", () => {
         const before = D.opKind(c.op);
@@ -1326,10 +1659,11 @@
         if (D.opKind(c.op) !== before) { c.value = undefined; c.value2 = undefined; }
         rerenderBuilder();
       });
-      row.append(opSel, valueEditor(n));
+      main.append(opSel, valueEditor(n));
     }
-    row.append(h("span", { class: "cnt", "data-ccount": n.id }));
-    if (parent) row.append(h("button", { type: "button", class: "x", title: "Remove condition", "aria-label": "Remove condition", onclick: () => removeNode(parent, n) }, "×"));
+    row.append(main, h("div", { class: "cond-side" },
+      h("span", { class: "cnt", "data-ccount": n.id }),
+      parent ? h("button", { type: "button", class: "x", title: "Remove condition", "aria-label": "Remove condition", onclick: () => removeNode(parent, n) }, icon("x", "sm")) : null));
     const wrap = h("div", null, row);
     if (state.picker && state.picker.node === n) wrap.append(renderPicker());
     return wrap;
@@ -1451,7 +1785,7 @@
     const here = p.trail[p.trail.length - 1];
     const box = h("div", { class: "picker" });
     const crumbs = h("div", { class: "crumbs" }, p.trail.map((t, k) => [
-      k ? h("span", { class: "muted" }, "›") : null,
+      k ? h("span", { class: "muted" }, icon("chevron", "sm")) : null,
       k < p.trail.length - 1 ? h("button", { type: "button", onclick: () => { p.trail = p.trail.slice(0, k + 1); rerenderBuilder(); } }, t.label) : h("b", null, t.label),
     ]), h("span", { class: "spacer" }), h("button", { type: "button", onclick: () => { state.picker = null; rerenderBuilder(); } }, "close"));
     const input = h("input", { type: "search", placeholder: "Search fields…", value: p.q, "aria-label": "Search fields" });
@@ -1483,7 +1817,7 @@
         .slice(0, 80)
         .map(([name, f], k) => h("li", { class: k === hi ? "hi" : "", role: "option", onclick: () => choose(name, f) },
           h("span", null, f.string || name), h("span", { class: "tech" }, name),
-          f.relation && p.trail.length < 4 ? h("button", { type: "button", class: "drill", title: `Fields of ${f.string}`, onclick: (ev) => { ev.stopPropagation(); drill(name, f); } }, "›") : null)));
+          f.relation && p.trail.length < 4 ? h("button", { type: "button", class: "drill", title: `Fields of ${f.string}`, onclick: (ev) => { ev.stopPropagation(); drill(name, f); } }, icon("chevron", "sm")) : null)));
     };
     fieldsOf(here.model).then((fields) => {
       rows = Object.entries(fields).filter(([, f]) => f.searchable !== false && f.type !== "binary").sort((a, b) => (a[1].string || a[0]).localeCompare(b[1].string || b[0]));
@@ -1551,8 +1885,11 @@
     const ctx = state.ctx;
     const ex = state.explain;
     const frag = h("div");
-    frag.append(h("p", { class: "muted small", style: "margin-top:0" },
-      "Pick a record to see which conditions it passes and which one keeps it out of the results. Every condition is checked by the server, so computed fields, related paths and access rules are taken into account."));
+    if (!state.hints.explain) {
+      frag.append(h("div", { class: "hint" }, icon("explain", "sm"),
+        h("span", { class: "grow" }, "Pick a record to see which conditions it passes, and which one keeps it out. The server checks each one."),
+        h("button", { type: "button", class: "x", title: "Got it", "aria-label": "Dismiss hint", onclick: () => dismissHint("explain") }, icon("x", "sm"))));
+    }
 
     // record chooser
     const input = h("input", { class: "grow", placeholder: `Search ${ctx.displayName || ctx.resModel}…`, value: ex.label || (ex.resId ? `#${ex.resId}` : ""), "aria-label": "Record" });
@@ -1583,13 +1920,17 @@
       ctx.viewType === "form" && ctx.resId ? h("button", { type: "button", class: "btn sm", onclick: () => chooseRecord(ctx.resId, "") }, "Use the open record") : null,
       ctx.viewType === "list" ? h("button", { type: "button", class: `btn sm${ex.picking ? " primary" : ""}`, onclick: startPicking }, ex.picking ? "Click a row in the list…" : "Pick a row from the list") : null));
 
-    // domain to test
+    // the domain to test, next to the button
     const hasBuilder = !!(state.builder && state.builder.model === ctx.resModel);
-    frag.append(h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "muted small" }, "Check against"),
-      h("label", { class: "check" }, h("input", { type: "radio", name: "src", checked: ex.source === "search", onchange: () => { ex.source = "search"; } }), "current search"),
-      h("label", { class: "check", title: hasBuilder ? "" : "Open the Builder tab first" }, h("input", { type: "radio", name: "src", disabled: !hasBuilder, checked: ex.source === "builder", onchange: () => { ex.source = "builder"; } }), "builder domain")));
+    if (!hasBuilder) ex.source = "search";
+    const srcBtn = (key, label, disabled) => h("button", {
+      type: "button", class: ex.source === key ? "on" : "", "aria-pressed": ex.source === key ? "true" : "false", disabled: disabled || null,
+      title: disabled ? "Build a filter in the Build tab first" : `Check against the ${label.toLowerCase()}`, onclick: () => { ex.source = key; render(); },
+    }, label);
     frag.append(h("div", { class: "row", style: "margin-top:10px" },
-      h("button", { type: "button", class: "btn primary", disabled: !ex.resId || ex.running, onclick: runExplain }, ex.running ? "Checking…" : "Explain")));
+      h("button", { type: "button", class: "btn primary", disabled: !ex.resId || ex.running, onclick: runExplain }, ex.running ? "Checking…" : "Explain"),
+      h("span", { class: "muted small" }, "against"),
+      h("span", { class: "seg", role: "group", "aria-label": "Check against" }, srcBtn("search", "Current search"), srcBtn("builder", "Builder", !hasBuilder))));
 
     if (ex.result) frag.append(renderExplainResult(ex.result));
     return frag;
@@ -1764,11 +2105,11 @@
   function renderExplainResult(r) {
     const box = h("div");
     if (r.error) {
-      box.append(h("div", { class: "verdict warn" }, h("span", { class: "ico" }, "!"), r.error));
+      box.append(h("div", { class: "verdict warn" }, h("span", { class: "ico" }, icon("alert")), r.error));
       return box;
     }
     if (r.missing) {
-      box.append(h("div", { class: "verdict bad" }, h("span", { class: "ico" }, "✕"), `Record #${r.rid} doesn't exist or you don't have access to it.`));
+      box.append(h("div", { class: "verdict bad" }, h("span", { class: "ico" }, icon("clear")), `Record #${r.rid} doesn't exist or you don't have access to it.`));
       box.append(h("p", { class: "muted small" }, "Record rules and access rights hide it from your user, whatever the filters say."));
       return box;
     }
@@ -1776,9 +2117,9 @@
     const userOk = r.planUser ? r.resU[r.planUser.tree.id] : true;
     const actionOk = r.planAction ? r.resA[r.planAction.tree.id] : true;
     if (r.inSearch) {
-      box.append(h("div", { class: "verdict ok" }, h("span", { class: "ico" }, "✓"), `${r.name} is in the results.`));
+      box.append(h("div", { class: "verdict ok" }, h("span", { class: "ico" }, icon("check")), `${r.name} is in the results.`));
     } else {
-      box.append(h("div", { class: "verdict bad" }, h("span", { class: "ico" }, "✕"), `${r.name} is filtered out.`));
+      box.append(h("div", { class: "verdict bad" }, h("span", { class: "ico" }, icon("clear")), `${r.name} is filtered out.`));
       const reasons = h("ul", { class: "causes" });
       if (r.archived) reasons.append(h("li", null, h("b", null, "It is archived. "), "Odoo hides archived records unless the search mentions the Active field (try the Archived filter)."));
       if (r.planAction && actionOk === false) {
@@ -1822,7 +2163,7 @@
   function renderXNode(n, res, r, fields) {
     const v = res[n.id];
     const cls = v === true ? "yes" : v === false ? "no" : "unk";
-    const mark = v === true ? "✓" : v === false ? "✕" : "?";
+    const mark = v === true ? icon("check") : v === false ? icon("x") : "?";
     if (n.type === "leaf") {
       const actual = typeof n.leaf[0] === "string" ? actualText(n.leaf[0], r.rec, fields) : "";
       return h("li", null, h("div", { class: `xnode ${cls}` }, h("span", { class: "mark" }, mark),
@@ -1864,7 +2205,7 @@
       frag.append(h("p", { class: "muted small", style: "margin:0 0 8px" }, "No default filters or group-bys: the menu opens on all its records."));
     } else {
       frag.append(h("div", { class: "facets" }, defaults.map((d) => h("span", { class: `facet${d.kind === "groupBy" ? " group" : ""}`, style: "padding-right:9px" },
-        h("span", null, `${d.kind === "favorite" ? "★ " : d.kind === "groupBy" ? "☰ " : ""}${d.label}`)))));
+        d.kind === "favorite" ? icon("star", "sm fill") : d.kind === "groupBy" ? icon("group", "sm") : null, h("span", null, d.label)))));
       if (hasDefaultFavorite) frag.append(h("p", { class: "muted small" }, "A favorite is set as default for this menu, so it is used instead of the menu's own default filters."));
     }
     frag.append(h("div", { style: "margin-top:10px" }, resetButtons(false)));
@@ -1894,10 +2235,22 @@
     for (const item of gbs) gwrap.append(presetItem(item));
     frag.append(gwrap);
     if (groupBy.length) {
-      frag.append(h("p", { class: "small", style: "margin:8px 0 0" }, h("span", { class: "muted" }, "Grouped by "),
+      // the current grouping, in order: move levels left/right or remove them
+      const move = (k, d) => {
+        const next = groupBy.slice();
+        if (d === 0) next.splice(k, 1);
+        else [next[k], next[k + d]] = [next[k + d], next[k]];
+        bridge("setGroupBy", { specs: next }).then(() => autoCollapse(false)).catch(fail);
+      };
+      frag.append(h("div", { class: "gbrow", style: "margin-top:10px", "aria-label": "Current grouping" }, h("span", { class: "muted small" }, "Grouped by"),
         groupBy.map((g, k) => {
           const [name, interval] = g.split(":");
-          return [k ? " › " : "", h("b", null, `${(fields[name] && fields[name].string) || name}${interval ? ` (${interval})` : ""}`)];
+          const label = `${(fields[name] && fields[name].string) || name}${interval ? ` (${interval})` : ""}`;
+          return [k ? h("span", { class: "gbsep" }, icon("chevron", "sm")) : null,
+            h("span", { class: "gb", "data-gb": g }, label,
+              h("button", { type: "button", title: "Group by this earlier", "aria-label": `Move ${label} earlier`, disabled: k === 0 || null, onclick: () => move(k, -1) }, icon("left", "sm")),
+              h("button", { type: "button", title: "Group by this later", "aria-label": `Move ${label} later`, disabled: k === groupBy.length - 1 || null, onclick: () => move(k, 1) }, icon("right", "sm")),
+              h("button", { type: "button", title: "Stop grouping by this", "aria-label": `Remove ${label}`, onclick: () => move(k, 0) }, icon("x", "sm")))];
         })));
     }
     // custom group-by on any groupable field
@@ -1933,20 +2286,26 @@
       }
     };
     const options = [...(relative ? relative.options.map((o) => ({ ...o, target: relative })) : []), ...item.options.map((o) => ({ ...o, target: item }))];
-    const star = item.isDefault || (relative && relative.isDefault) ? h("span", { class: "dflt", title: "Default for this menu" }, "★") : null;
+    const star = item.isDefault || (relative && relative.isDefault) ? h("span", { class: "dflt", title: "Default for this menu" }, icon("star", "sm fill")) : null;
+    const kind = /groupBy/i.test(item.type) ? "groupBy" : "filter";
     if (!options.length) {
       return h("button", {
         type: "button", class: `chip${item.isActive ? " on" : ""}`, role: "switch", "aria-checked": item.isActive ? "true" : "false",
-        "data-item": item.description, onclick: () => toggle(undefined),
-      }, star, item.type === "groupBy" ? "☰ " : "", item.description);
+        "data-item": item.description, "data-kind": kind, onclick: () => toggle(undefined),
+      }, star, kind === "groupBy" ? icon("group", "sm") : null, kind === "groupBy" ? " " : "", item.description);
     }
+    // long option lists (months, quarters, years…): the first few plus anything active, the rest on demand
+    const moreKey = `item:${item.id}`;
+    const all = state.moreOptions.has(moreKey) || options.length <= 6;
+    const visible = all ? options : options.filter((o, k) => k < 5 || o.isActive);
     const active = item.isActive || (relative && relative.isActive);
-    return h("div", { class: `preset-opt${active ? " on" : ""}`, "data-item": item.description },
-      h("span", { class: "preset-name" }, star, item.type === "dateGroupBy" ? "☰ " : "", item.description),
-      h("span", { class: "chips", style: "margin-top:4px" }, options.map((o) => h("button", {
+    return h("div", { class: `preset-opt${active ? " on" : ""}`, "data-item": item.description, "data-kind": kind },
+      h("span", { class: "preset-name" }, star, kind === "groupBy" ? icon("group", "sm") : null, kind === "groupBy" ? " " : "", item.description),
+      h("span", { class: "chips", style: "margin-top:4px" }, visible.map((o) => h("button", {
         type: "button", class: `chip${o.isActive ? " on" : ""}`, role: "switch", "aria-checked": o.isActive ? "true" : "false",
         onclick: () => toggle(o.id, o.target),
-      }, o.description))));
+      }, o.description)),
+      all ? null : h("button", { type: "button", class: "chip more", onclick: () => { state.moreOptions.add(moreKey); render(); } }, `More (${options.length - visible.length})…`)));
   }
 
   // ===========================================================================
@@ -2005,7 +2364,7 @@
         const who = !f.user_ids.length ? "Shared" : f.user_ids.length === 1 && f.user_ids[0] === uid ? "Private" : "Shared with some users";
         return h("div", { class: "item" },
           h("div", { class: "main", role: "button", tabindex: "0", onclick: () => applyFavorite(f), onkeydown: (ev) => ev.key === "Enter" && applyFavorite(f) },
-            h("div", { class: "name" }, f.is_default ? "★ " : "", f.name),
+            h("div", { class: "name" }, f.is_default ? h("span", { class: "dflt", title: "Default for this menu" }, icon("star", "sm fill")) : "", f.name),
             h("div", { class: "sub mono", title: f.domain }, `${who}${f.action_id ? ` · ${f.action_id[1]}` : ""} · ${f.domain}`)),
           h("button", { type: "button", class: "btn sm ghost", title: "Open in the builder", onclick: () => favoriteToBuilder(f) }, "Edit"));
       })));
@@ -2089,7 +2448,10 @@
   // keyboard: Escape closes the field picker, then the panel
   shadow.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
-    if (state.explain.picking) {
+    if (!menuEl.hidden) {
+      toggleMenu(false);
+      menuBtn.focus();
+    } else if (state.explain.picking) {
       stopPicking();
       render();
     } else if (state.picker) {
@@ -2128,12 +2490,14 @@
 
   (async () => {
     await migrateOldKeys();
-    const [width, pins, history, tab, pos, keepOpen] = await Promise.all([store.get(K.width, 420), store.get(K.pins, {}), store.get(K.history, []),
-      store.get(K.tab, "filters"), store.get(K.fab, null), store.get(K.keepOpen, false)]);
+    const [width, pins, history, tab, pos, keepOpen, layout, hints] = await Promise.all([store.get(K.width, 360), store.get(K.pins, {}), store.get(K.history, []),
+      store.get(K.tab, "filters"), store.get(K.fab, null), store.get(K.keepOpen, false), store.get(K.layout, "push"), store.get(K.hints, {})]);
+    state.layout = layout === "overlay" ? "overlay" : "push";
+    state.hints = hints && typeof hints === "object" ? hints : {};
     if (pos && typeof pos.right === "number" && typeof pos.bottom === "number") fabPos = pos;
     fabPos = placeFab(fabPos);
     setKeepOpen(!!keepOpen);
-    panel.style.width = `${Math.min(Math.max(width, 320), window.innerWidth * 0.92)}px`;
+    panel.style.width = `${Math.min(Math.max(width, 300), window.innerWidth * 0.92)}px`;
     state.pins = pins || {};
     state.history = Array.isArray(history) ? history : [];
     state.tab = TABS.some(([k]) => k === tab) ? tab : "filters";

@@ -19,6 +19,8 @@ Browsers: Chrome/Edge 95+ and Firefox 128+.
 
 ## Panel and floating button
 
+- The panel **pushes Odoo's page aside** so nothing is hidden behind it (switch to *Float over the
+  page* in the ⋯ settings menu). It takes Odoo's own colours and font, including dark mode.
 - **Alt+Shift+F** (or the toolbar button) opens the panel; pressing it again collapses it to a
   round floating button. The button shows how many filters are active, opens the panel when
   clicked, and can be dragged anywhere (its position is remembered).
@@ -32,6 +34,8 @@ Browsers: Chrome/Edge 95+ and Firefox 128+.
 ## Features
 
 **Filters**: one click per value, no typing.
+- *Find a field or value…*: type "gemini" to get *Customer: Gemini Furniture (13)* directly.
+- Every field shows its top values as one-click chips; open several fields at once.
 - Value bars with record counts for status, selection, relational, tag and boolean fields.
   Counts are faceted: each field's counts ignore that field's own filter, so you can see what
   picking another value would give.
@@ -57,8 +61,8 @@ Browsers: Chrome/Edge 95+ and Firefox 128+.
 - **✕ Clear all** removes every filter and group-by; **↺ Reset to default** goes back to the
   menu's default search. Both buttons are also under *Active search* on the Filters tab.
 - The menu's predefined filters (with date periods: Today, This week, October, Q3, 2026…) and
-  group-bys (with intervals for dates) as one-click toggles, the current grouping, and
-  *Add a custom group* on any groupable field.
+  group-bys (with intervals for dates) as one-click toggles, the current grouping (reorder or
+  remove levels), and *Add a custom group* on any groupable field.
 
 **Saved**: save the current search as a regular Odoo favorite (private, shared or default),
 re-apply or edit favorites, and keep a history of recent OoFind filters.

@@ -146,6 +146,14 @@ class Chrome:
         self.proc.terminate()
         self.proc.wait(10)
 
+    KEYS = {"Enter": ("Enter", 13, "\r"), "Escape": ("Escape", 27, ""), "ArrowDown": ("ArrowDown", 40, ""), "ArrowUp": ("ArrowUp", 38, ""), "Tab": ("Tab", 9, "")}
+
+    def key(self, name):
+        code, vk, text = self.KEYS[name]
+        params = {"key": name, "code": code, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
+        self.page("Input.dispatchKeyEvent", {"type": "keyDown", **params, **({"text": text} if text else {})})
+        self.page("Input.dispatchKeyEvent", {"type": "keyUp", **params})
+
     def isolated_world(self, name):
         frame = self.page("Page.getFrameTree")["frameTree"]["frame"]["id"]
         return self.page("Page.createIsolatedWorld", {"frameId": frame, "worldName": name})["executionContextId"]
@@ -235,6 +243,13 @@ class Firefox:
     def isolated_world(self, name):
         return name
 
+    BIDI_KEYS = {"Enter": "\ue007", "Escape": "\ue00c", "ArrowDown": "\ue015", "ArrowUp": "\ue013", "Tab": "\ue004"}
+
+    def key(self, name):
+        k = self.BIDI_KEYS[name]
+        self.send("input.performActions", {"context": self.context, "actions": [
+            {"type": "key", "id": "kbd", "actions": [{"type": "keyDown", "value": k}, {"type": "keyUp", "value": k}]}]})
+
     def screenshot(self):
         return base64.b64decode(self.send("browsingContext.captureScreenshot", {"context": self.context})["data"])
 
@@ -298,6 +313,8 @@ def main():
     ap.add_argument("--firefox", default=shutil.which("firefox"))
     ap.add_argument("--screenshot", help="save PNGs of the panel with this prefix")
     ap.add_argument("--size", default="1400x900", help="viewport WIDTHxHEIGHT (store screenshots: 1280x800)")
+    ap.add_argument("--dark", action="store_true", help="darken the Odoo page first: the panel must follow its colours")
+    ap.add_argument("--panel-width", type=int, help="start the panel at this width (layout checks)")
     opts = ap.parse_args()
 
     # snap-packaged Firefox can only use profiles inside its own snap directory
@@ -344,7 +361,14 @@ def main():
             for path in SCRIPTS:
                 chrome.evaluate((ROOT / path).read_text(), ctx)
 
+        if opts.dark:
+            # a dark Odoo look-alike: dark page and cards, light text (the panel reads these)
+            chrome.evaluate("""(() => { const s = document.createElement('style'); s.textContent =
+              'body, .o_action_manager, .o_content, .o_list_renderer, .o_control_panel, .card, .o_list_table, .o_list_table th, .o_list_table td, .o_data_row, .modal-content { background-color: #1c1d22 !important; color: #e3e3e8 !important; }';
+              document.head.append(s); })(); true""")
         chrome.evaluate(PRELUDE, ctx)
+        if opts.panel_width:
+            chrome.evaluate(f"__store['oofind.width'] = {opts.panel_width}; true", ctx)
         inject()
         chrome.evaluate(HELPERS, ctx)
         ev = lambda js: chrome.evaluate(js, ctx)  # noqa: E731
@@ -352,14 +376,24 @@ def main():
         page = chrome.evaluate
 
         def opens():
-            wait("T.q('.where') && T.q('.where').textContent.includes('sale.order')")
+            wait("T.q('.where') && T.q('.where').title.includes('Model: sale.order') && T.q('.where').textContent === 'Sales Orders'")
             wait("T.qa('.card').length >= 3")
             assert ev("T.q('nav.tabs .active').dataset.tab") == "filters"
         check("panel opens on the sales orders action", opens)
 
+        def pushes():
+            # push mode (default): Odoo's page narrows to the panel's left edge, nothing hidden underneath
+            wait("document.documentElement.classList.contains('oofind-push')")
+            right = page("document.querySelector('.o_action_manager').getBoundingClientRect().right")
+            left = ev("T.q('.panel').getBoundingClientRect().left")
+            assert abs(right - left) <= 2, (right, left)
+        check("push mode: Odoo's page ends where the panel starts", pushes)
+
         def migrated():
-            assert ev("T.q('.panel').style.width") == "500px", ev("T.q('.panel').style.width")
-            assert ev("__store['oofind.width']") == 500 and ev("'searcho.width' in __store") is False
+            if not opts.panel_width:
+                assert ev("T.q('.panel').style.width") == "500px", ev("T.q('.panel').style.width")
+                assert ev("__store['oofind.width']") == 500
+            assert ev("'searcho.width' in __store") is False
             assert ev("T.qa('.pin.on').length") == 1, "pinned field carried over"
             ev("T.qa('.pin.on')[0].click(); true")  # unpin: keep the rest of the run unchanged
             wait("T.qa('.pin.on').length === 0")
@@ -444,8 +478,8 @@ def main():
                                      + " | status: " + ev("T.status()") + " | panel hidden: " + str(ev("T.q('.panel').hidden"))) from None
             ev("[...T.qa('.card.open .chip')].find(c => c.textContent === 'This year').click(); true")
             wait("T.facets().some(f => f.includes('This year'))")
-            wait("!!T.q('.facet.mine button')")
-            ev("T.q('.facet.mine button').click(); true")
+            wait("!!T.q('.card.open [data-act=clear-field]')")
+            ev("T.q('.card.open [data-act=clear-field]').click(); true")
             wait("T.facets().length === 0")
         check("date preset + histogram; removing from the panel", date_preset)
 
@@ -583,7 +617,7 @@ def main():
             chrome.wait("document.querySelectorAll('.o_data_row').length > 0", timeout=20)
             ev("T.tab('filters'); true")
             wait("T.qa('.card').length >= 3")
-            ev("T.card('Status').querySelector('.card-head').click(); true")
+            ev("if (!T.card('Status').classList.contains('open')) T.card('Status').querySelector('.card-head').click(); true")
             wait("T.card('Status').querySelectorAll('.val').length >= 3")
             ev("[...T.card('Status').querySelectorAll('.val')].find(v => v.querySelector('.lbl').textContent === 'Sales Order').click(); true")
             wait("T.facets().length === 1")
@@ -604,11 +638,16 @@ def main():
             chrome.wait(f"document.querySelectorAll('.o_searchview_facet').length > {before}", timeout=20)
             wait(f"T.qa('.presets .chip.on').some(c => c.textContent === {json.dumps(first)})")
             # a predefined group-by
-            ev("[...T.qa('.presets .chip')].find(c => c.textContent.startsWith('☰')).click(); true")
-            wait("T.facets().some(f => f.includes('>') || /☰|Salesperson|Customer|Order Date|Status/.test(f)) && T.qa('.presets .chip.on').some(c => c.textContent.startsWith('☰'))")
+            ev("T.q('.presets .chip[data-kind=groupBy]').click(); true")
+            wait("!!T.q('.presets .chip.on[data-kind=groupBy]') && !!T.q('.gb')")
             # custom group on any field
             ev("const s = [...T.qa('select')].find(x => x.getAttribute('aria-label') === 'Add a custom group'); s.value = 'partner_id'; s.dispatchEvent(new Event('change')); true")
             wait("T.q('.body').textContent.includes('Grouped by') && T.q('.body').textContent.includes('Customer')")
+            # two levels now: move the first one later and check the order flips
+            wait("T.qa('.gb').length === 2")
+            before = ev("T.qa('.gb').map(g => g.dataset.gb)")
+            ev("T.qa('.gb')[0].querySelector('[aria-label^=\"Move\"][aria-label$=\"later\"]').click(); true")
+            wait(f"JSON.stringify(T.qa('.gb').map(g => g.dataset.gb)) === {json.dumps(json.dumps(before[::-1], separators=(",", ":")))}")
             # clear all
             ev("T.q('[data-act=clear-all]').click(); true")
             try:
@@ -635,6 +674,43 @@ def main():
                 ev("T.q('[data-act=clear-all]').click(); true")
                 chrome.wait("document.querySelectorAll('.o_searchview_facet').length === 0", timeout=20)
         check("presets: menu filters, group-bys, clear all, reset to default", presets)
+
+        def keyboard():
+            ev("T.tab('filters'); true")
+            wait("!!T.q('[data-omni]')")
+            ev("var o = T.q('[data-omni]'); o.focus(); o.value = 'gemini'; o.dispatchEvent(new Event('input')); true")
+            wait("T.qa('.hit').some(h => h.textContent.includes('Gemini'))", timeout=20)
+            chrome.key("ArrowDown")
+            wait("__root.activeElement && __root.activeElement.classList.contains('hit')")
+            # walk to the value hit and pick it with Enter
+            for _ in range(6):
+                if ev("__root.activeElement.textContent.includes('Gemini')"):
+                    break
+                chrome.key("ArrowDown")
+            focused = ev("__root.activeElement && __root.activeElement.outerHTML.slice(0, 160)")
+            chrome.key("Enter")
+            try:
+                wait("T.facets().some(f => f.includes('Gemini'))", timeout=20)
+            except TimeoutError:
+                raise AssertionError(f"focused before Enter: {focused} | after: {ev('__root.activeElement && __root.activeElement.outerHTML.slice(0, 120)')} | status: {ev('T.status()')}") from None
+            page("document.querySelectorAll('.o_searchview_facet .o_facet_remove').forEach(b => b.click()); true")
+            wait("T.facets().length === 0")
+            # Esc collapses the panel to the button (focused), Enter opens it again
+            ev("T.q('[data-omni]').value = ''; T.q('[data-omni]').focus(); true")
+            chrome.key("Escape")
+            wait("T.q('.panel').hidden && __root.activeElement === T.q('.fab')")
+            assert not page("document.documentElement.classList.contains('oofind-push')"), "collapsed: page back to full width"
+            chrome.key("Enter")
+            wait("!T.q('.panel').hidden")
+            # the settings menu: opens, Esc closes it and returns focus to its button
+            ev("T.q('[data-act=menu]').click(); true")
+            try:
+                wait("!T.q('.menu').hidden && !!(__root.activeElement && __root.activeElement.closest('.menu'))", timeout=8)
+            except TimeoutError:
+                raise AssertionError(ev("JSON.stringify({hidden: T.q('.menu').hidden, kids: T.q('.menu').children.length, active: __root.activeElement && __root.activeElement.outerHTML.slice(0, 120), status: T.status()})")) from None
+            chrome.key("Escape")
+            wait("T.q('.menu').hidden && __root.activeElement === T.q('[data-act=menu]')")
+        check("keyboard: search, arrows + Enter, Esc collapses, menu", keyboard)
 
         def builder_collapses():
             ev("T.q('[data-act=keep]').click(); true")
