@@ -1,4 +1,4 @@
-/* OoFind: visual search panel for Odoo 17+.
+/* OoFind: visual search panel for Odoo 16+.
  *
  * Injected on demand (toolbar button / Alt+Shift+F) into the active tab. Draws
  * a docked panel in a shadow root. Data comes from the page's own Odoo session
@@ -117,8 +117,15 @@
       alias[key] = a;
       fields.push(`${key}:${fn}(${f})`);
     }
-    const orderby = order ? order.replace(/(\w+):\w+/g, "$1") : false;
-    const rows = await orm(model, "read_group", [domain, fields, groupby], { lazy: false, orderby, limit: limit || null });
+    let orderby = order ? order.replace(/(\w+):\w+/g, "$1") : false;
+    // Odoo 16 can't order groups by __count: sort and limit here instead
+    const countOrder = state.major !== null && state.major < 17 && orderby && /__count/.test(orderby) ? (/desc/i.test(orderby) ? -1 : 1) : 0;
+    if (countOrder) orderby = false;
+    let rows = await orm(model, "read_group", [domain, fields, groupby], { lazy: false, orderby, limit: countOrder ? null : limit || null });
+    if (countOrder) {
+      rows = rows.sort((x, y) => countOrder * (x.__count - y.__count));
+      if (limit) rows = rows.slice(0, limit);
+    }
     const fieldsOfModel = await fieldsOf(model);
     return rows.map((row) => {
       const out = { __count: row.__count };
@@ -514,9 +521,9 @@
         state.ctx = ctx;
         const major = versionMajor(ctx.version || (state.session && state.session.server_version_info));
         state.major = major;
-        if (major !== null && major < 17) {
+        if (major !== null && major < 16) {
           ctx.available = false;
-          ctx.reason = `OoFind needs Odoo 17 or later (this is Odoo ${major}).`;
+          ctx.reason = `OoFind needs Odoo 16 or later (this is Odoo ${major}).`;
         }
         if (!ctx.available) {
           whereEl.textContent = state.session ? state.session.db || location.host : location.host;
@@ -546,7 +553,8 @@
         state.valueCache.clear();
         whereEl.textContent = `${ctx.displayName || ctx.resModel} · ${ctx.resModel} · ${ctx.viewType}`;
         whereEl.title = `${ctx.displayName || ""}\nModel: ${ctx.resModel}\nView: ${ctx.viewType}\nDatabase: ${(state.session && state.session.db) || ""}`;
-        render();
+        if (force) render();
+        else renderSoon();
         updateTotal();
         updateBadge();
         if (force) status("");
@@ -580,7 +588,38 @@
 
   // ---------------------------------------------------------------------------
   // render
+  let renderPending = false;
+  let lastKeyAt = 0;
+  let renderTimer = null;
+  const TYPING_MS = 1500;
+  bodyEl.addEventListener("keydown", () => { lastKeyAt = Date.now(); });
+
+  /** The user is typing in one of the panel's text fields (focused and a key pressed recently). */
+  function typing() {
+    const el = shadow.activeElement;
+    const field = !!(el && bodyEl.contains(el) && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["checkbox", "radio", "button"].includes(el.type))));
+    return field && Date.now() - lastKeyAt < TYPING_MS;
+  }
+
+  /** Re-render now, or once the user stops typing / leaves the field (background refreshes). */
+  function renderSoon() {
+    clearTimeout(renderTimer);
+    if (!typing()) return render();
+    renderPending = true;
+    renderTimer = setTimeout(() => { if (renderPending) renderSoon(); }, TYPING_MS);
+  }
+
+  bodyEl.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (renderPending && !typing()) {
+        renderPending = false;
+        render();
+      }
+    });
+  });
+
   function render() {
+    renderPending = false;
     applyTheme();
     for (const b of tabsEl.children) {
       const on = b.dataset.tab === state.tab;
@@ -1133,9 +1172,14 @@
         b.textErr = "";
         err.textContent = "";
         ta.classList.remove("bad");
+        if (!ta.isConnected || state.builder !== b) {
+          // the panel was redrawn meanwhile: draw it again from the parsed tree
+          render();
+          return;
+        }
         // re-render the tree only, keep the textarea (and its caret) alive
         const fresh = renderGroup(b.root, null);
-        frag.querySelector(".group").replaceWith(fresh);
+        bodyEl.querySelector(".group").replaceWith(fresh);
         builderChanged(false);
       } catch (e) {
         b.textErr = e.message;

@@ -67,8 +67,13 @@
     return null;
   }
 
+  /** Odoo's JS module registry: odoo.loader.modules (17+) or odoo.__DEBUG__.services (16). */
   function modules() {
-    return (window.odoo && window.odoo.loader && window.odoo.loader.modules) || new Map();
+    const o = window.odoo || {};
+    if (o.loader && o.loader.modules) return o.loader.modules;
+    const services = o.__DEBUG__ && o.__DEBUG__.services;
+    if (services) return { get: (name) => services[name] };
+    return new Map();
   }
 
   function DomainClass() {
@@ -78,7 +83,9 @@
 
   function evalCtx(sm) {
     try {
-      return sm.domainEvalContext;
+      // 16 has no domainEvalContext: it evaluates with the global and user contexts
+      if ("domainEvalContext" in sm) return sm.domainEvalContext;
+      return Object.assign({}, sm.globalContext, sm.userService && sm.userService.context);
     } catch {
       return {};
     }
@@ -90,6 +97,19 @@
     if (Array.isArray(domain)) return domain;
     if (!Domain) return [];
     return new Domain(domain).toList(evalCtx(sm));
+  }
+
+  /** Domain of one facet group (16's facets don't carry it). */
+  function groupDomain(sm, groupId) {
+    const Domain = DomainClass();
+    try {
+      const group = sm._getGroups().find((g) => g.id === groupId);
+      if (!group) return null;
+      const ds = group.activeItems.map((a) => sm._getSearchItemDomain(a)).filter(Boolean);
+      return ds.length ? Domain.or(ds).toList(evalCtx(sm)) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Search domain without the given group (for faceted counts). Falls back to the full domain. */
@@ -161,7 +181,7 @@
       title: f.title || "",
       values: (f.values || []).map(String),
       key: byGroup.get(f.groupId) || null,
-      domain: f.type === "groupBy" ? null : toList(f.domain, sm),
+      domain: f.type === "groupBy" ? null : f.domain ? toList(f.domain, sm) : groupDomain(sm, f.groupId),
     }));
     const excl = {};
     for (const f of facets) if (f.key) excl[f.key] = domainWithout(sm, f.groupId);

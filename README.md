@@ -1,6 +1,6 @@
 # OoFind: visual search for Odoo
 
-A browser extension (Chrome, Edge, Firefox) that adds a search panel to Odoo 17, 18, 19 and later (tested on 17.0, 18.0, 19.0 and 19.5).
+A browser extension (Chrome, Edge, Firefox) that adds a search panel to Odoo 16, 17, 18, 19 and later (tested on 16.0, 17.0, 18.0, 19.0 and 19.5).
 Click the toolbar button or press **Alt+Shift+F** on any Odoo list, kanban, pivot, graph or form view.
 
 ## Panel and floating button
@@ -58,7 +58,7 @@ save it in favorites, and keep it through breadcrumbs.
 - `src/page/bridge.js` runs in the page's own JS world and talks to the web client's live
   `SearchModel` (`createNewFilters`, `deactivateGroup`, `createNewFavorite`). It finds the model by
   walking the Owl component tree from `odoo.__WOWL_DEBUG__.root`, which works with Owl 2
-  (Odoo 17.0–19.0) and Owl 3 (19.5+/20). On Odoo 17/18, grouped counts use `read_group`
+  (Odoo 16.0–19.0) and Owl 3 (19.5+/20). On Odoo 16–18, grouped counts use `read_group`
   (translated to the `formatted_read_group` shape that 19+ provides).
 - `src/content/oofind.js` is the panel (shadow DOM, isolated world). Data comes from
   `/web/dataset/call_kw` with the page's session: `fields_get`, `formatted_read_group`,

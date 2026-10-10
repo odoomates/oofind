@@ -1,4 +1,4 @@
-"""End-to-end test against a real Odoo server (17+).
+"""End-to-end test against a real Odoo server (16+).
 
 Opens Odoo in headless Chrome, logs in, injects the bridge into the page world
 and the panel into an isolated world exactly like the background's
@@ -465,7 +465,11 @@ def main():
             ev("[...T.qa('.btn')].find(b => b.textContent === 'Start empty').click(); true")
             wait("!!T.q('[data-btext]')")
             ev("""var ta = T.q('[data-btext]'); ta.focus(); ta.value = "[('state', 'in', ['sale']), ('amount_total', '>', 1000)]"; ta.dispatchEvent(new Event('input')); true""")
-            wait("T.qa('.cond').length === 2 && T.q('[data-bsummary]').textContent.includes('Sales Order')")
+            try:
+                wait("T.qa('.cond').length === 2 && T.q('[data-bsummary]').textContent.includes('Sales Order')")
+            except TimeoutError:
+                raise AssertionError(f"conds={ev('T.qa(`.cond .path`).map(x => x.textContent)')} summary={ev('T.q(`[data-bsummary]`).textContent')!r} "
+                                     f"text={ev('T.q(`[data-btext]`).value')!r} err={ev('T.q(`[data-berr]`).textContent')!r} status={ev('T.status()')!r}") from None
             expected = page("""fetch('/web/dataset/call_kw', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({jsonrpc: '2.0', method: 'call',
                 params: {model: 'sale.order', method: 'search_count', args: [[['state', 'in', ['sale']], ['amount_total', '>', 1000]]], kwargs: {}}})}).then(r => r.json()).then(r => r.result)""")
             wait(f"T.q('[data-bcount]').textContent === '{expected}'")
