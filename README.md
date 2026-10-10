@@ -15,7 +15,7 @@ Click the toolbar button or press **Alt+Shift+F** on any Odoo list, kanban, pivo
 
 Odoo 15 and older run their list, kanban and form views on the legacy web framework, whose
 search model OoFind cannot drive; on those versions the panel says so and does nothing else.
-Browsers: Chrome/Edge 95+ and Firefox 128+.
+Browsers: Chrome/Edge 95+ and Firefox 140+.
 
 ## Panel and floating button
 
@@ -100,7 +100,7 @@ python3 tests/e2e.py … --size 1280x800 --screenshot store/screenshots/s   # st
 Load `dist/chrome` with *chrome://extensions → Load unpacked*, or `dist/firefox` with
 *about:debugging → Load Temporary Add-on*. The root folder also loads unpacked as-is.
 
-Requires Chrome 95+ or Firefox 128+ (`scripting.executeScript` with `world: "MAIN"`).
+Requires Chrome 95+ or Firefox 140+.
 
 ## Publishing
 

@@ -110,7 +110,7 @@ One-time: sign in with a Firefox account (free).
 
 **Submit a New Add-on → On this site** (listed) → upload `dist/oofind-<version>-firefox.zip`.
 
-- Compatibility: Firefox (desktop), minimum 128 (from the manifest). Works with Odoo 16 and later only.
+- Compatibility: Firefox (desktop), minimum 140 (from the manifest). Works with Odoo 16 and later only.
 - Source code: **not needed**. Nothing is minified, transpiled or bundled; the package is the source.
 - Summary / description / homepage / support / license (MIT) / privacy policy: as above
 - Categories: *Search Tools*, *Other*
