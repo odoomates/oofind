@@ -3,6 +3,20 @@
 A browser extension (Chrome, Edge, Firefox) that adds a search panel to Odoo 16, 17, 18, 19 and later (tested on 16.0, 17.0, 18.0, 19.0 and 19.5).
 Click the toolbar button or press **Alt+Shift+F** on any Odoo list, kanban, pivot, graph or form view.
 
+## Compatibility
+
+| Odoo | Status |
+|---|---|
+| 19.x, 19.5+ (master) | Supported, tested |
+| 18.0 | Supported, tested |
+| 17.0 | Supported, tested |
+| 16.0 | Supported, tested |
+| 15.0 and older | **Not supported** |
+
+Odoo 15 and older run their list, kanban and form views on the legacy web framework, whose
+search model OoFind cannot drive; on those versions the panel says so and does nothing else.
+Browsers: Chrome/Edge 95+ and Firefox 128+.
+
 ## Panel and floating button
 
 - **Alt+Shift+F** (or the toolbar button) opens the panel; pressing it again collapses it to a

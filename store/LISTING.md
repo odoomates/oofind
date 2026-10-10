@@ -18,7 +18,7 @@ Upload packages are built with `python3 tools/build.py`:
 **Full description:**
 
 ```
-OoFind adds a visual search panel to Odoo 16, 17, 18, 19 and later. Press Alt+Shift+F (or click the toolbar button) on any list, kanban, pivot, graph or form view.
+OoFind adds a visual search panel to Odoo 16, 17, 18, 19 and later (Odoo 15 and older are not supported). Press Alt+Shift+F (or click the toolbar button) on any list, kanban, pivot, graph or form view.
 
 FILTERS: ONE CLICK, NO TYPING
 • Value bars with record counts for status, selection, customer, salesperson, tags and yes/no fields
@@ -106,7 +106,7 @@ One-time: sign in with a Firefox account (free).
 
 **Submit a New Add-on → On this site** (listed) → upload `dist/oofind-<version>-firefox.zip`.
 
-- Compatibility: Firefox (desktop), minimum 128 (from the manifest)
+- Compatibility: Firefox (desktop), minimum 128 (from the manifest). Works with Odoo 16 and later only.
 - Source code: **not needed**. Nothing is minified, transpiled or bundled; the package is the source.
 - Summary / description / homepage / support / license (MIT) / privacy policy: as above
 - Categories: *Search Tools*, *Other*
@@ -115,7 +115,8 @@ One-time: sign in with a Firefox account (free).
 
 **Notes to reviewer:**
 ```
-OoFind only works on an Odoo 16+ web client (https://www.odoo.com/trial gives a free instance, or runbot.odoo.com).
+OoFind only works on an Odoo 16+ web client; on Odoo 15 and older it only shows that the version is not supported.
+A free instance: https://www.odoo.com/trial (or runbot.odoo.com).
 To test: log in to Odoo, open Sales > Orders (or Contacts), click the OoFind toolbar button (or Alt+Shift+F).
 
 - The panel is injected on demand with scripting.executeScript (activeTab only).

@@ -523,7 +523,7 @@
         state.major = major;
         if (major !== null && major < 16) {
           ctx.available = false;
-          ctx.reason = `OoFind needs Odoo 16 or later (this is Odoo ${major}).`;
+          ctx.reason = `OoFind supports Odoo 16 and later. This is Odoo ${major}, whose views use an older search system that OoFind can't work with.`;
         }
         if (!ctx.available) {
           whereEl.textContent = state.session ? state.session.db || location.host : location.host;
