@@ -80,3 +80,7 @@ Load `dist/chrome` with *chrome://extensions → Load unpacked*, or `dist/firefo
 *about:debugging → Load Temporary Add-on*. The root folder also loads unpacked as-is.
 
 Requires Chrome 95+ or Firefox 128+ (`scripting.executeScript` with `world: "MAIN"`).
+
+## License
+
+MIT, see [LICENSE](LICENSE). OoFind is an independent project, not affiliated with Odoo S.A. "Odoo" is a trademark of Odoo S.A.
