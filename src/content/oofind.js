@@ -215,10 +215,16 @@
     TABS.map(([key, label]) => h("button", { type: "button", role: "tab", dataset: { tab: key }, onclick: () => setTab(key) }, label)));
   const grip = h("div", { class: "grip", title: "Drag to resize" });
   const keepBtn = h("button", { type: "button", "data-act": "keep", onclick: () => setKeepOpen(!state.keepOpen) }, "📌");
-  const FUNNEL = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 4.5A1.5 1.5 0 0 1 4.5 3h15a1.5 1.5 0 0 1 1.15 2.46L14.5 12.9V19a1 1 0 0 1-.55.9l-3 1.5A1 1 0 0 1 9.5 20.5v-7.6L3.35 5.46A1.5 1.5 0 0 1 3 4.5Z"/></svg>';
+  // funnel icon, built with DOM calls (no HTML parsing)
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const funnel = document.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "22", height: "22", "aria-hidden": "true" })) funnel.setAttribute(k, v);
+  const funnelPath = document.createElementNS(SVG_NS, "path");
+  funnelPath.setAttribute("fill", "currentColor");
+  funnelPath.setAttribute("d", "M3 4.5A1.5 1.5 0 0 1 4.5 3h15a1.5 1.5 0 0 1 1.15 2.46L14.5 12.9V19a1 1 0 0 1-.55.9l-3 1.5A1 1 0 0 1 9.5 20.5v-7.6L3.35 5.46A1.5 1.5 0 0 1 3 4.5Z");
+  funnel.append(funnelPath);
   const fabBadge = h("span", { class: "fab-badge", hidden: true });
-  const fab = h("button", { type: "button", class: "fab", hidden: true, "aria-label": "Open OoFind" }, fabBadge);
-  fab.insertAdjacentHTML("afterbegin", FUNNEL);
+  const fab = h("button", { type: "button", class: "fab", hidden: true, "aria-label": "Open OoFind" }, funnel, fabBadge);
   const panel = h("div", { class: "panel", role: "complementary", "aria-label": "OoFind" },
     grip,
     h("header", null,
@@ -1298,7 +1304,8 @@
     let items = [];
     let hi = 0;
     const show = () => {
-      list.hidden = !items.length;
+      // late search results must not reopen the list after the input lost focus
+      list.hidden = !items.length || shadow.activeElement !== input;
       list.replaceChildren(...items.map(([id, name], k) => h("li", { class: k === hi ? "hi" : "", role: "option", onmousedown: (ev) => { ev.preventDefault(); pick(k); } }, name)));
     };
     const pick = (k) => {
@@ -1457,7 +1464,7 @@
     const list = h("ul", { hidden: true, role: "listbox" });
     let items = [];
     const show = () => {
-      list.hidden = !items.length;
+      list.hidden = !items.length || shadow.activeElement !== input;
       list.replaceChildren(...items.map(([id, name]) => h("li", { role: "option", onmousedown: (ev) => { ev.preventDefault(); chooseRecord(id, name); } }, name, h("span", { class: "muted small" }, `  #${id}`))));
     };
     const search = debounce(async () => {

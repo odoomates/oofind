@@ -80,7 +80,7 @@ class WebSocket:
 
 
 class Chrome:
-    def __init__(self, binary, profile):
+    def __init__(self, binary, profile, size=None):
         self.proc = subprocess.Popen(
             [binary, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={profile}", "--no-first-run",
              "--no-default-browser-check", "--disable-gpu", "--window-size=1400,900", "about:blank"],
@@ -95,6 +95,9 @@ class Chrome:
         target = self.send("Target.createTarget", {"url": "about:blank"})["targetId"]
         self.session = self.send("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
         self.send("Page.enable", session=self.session)
+        if size:
+            w, h = size
+            self.send("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False}, session=self.session)
 
     def send(self, method, params=None, session=None):
         self.next_id += 1
@@ -294,6 +297,7 @@ def main():
     ap.add_argument("--binary", default=shutil.which("google-chrome") or shutil.which("chromium"))
     ap.add_argument("--firefox", default=shutil.which("firefox"))
     ap.add_argument("--screenshot", help="save PNGs of the panel with this prefix")
+    ap.add_argument("--size", default="1400x900", help="viewport WIDTHxHEIGHT (store screenshots: 1280x800)")
     opts = ap.parse_args()
 
     # snap-packaged Firefox can only use profiles inside its own snap directory
@@ -303,7 +307,7 @@ def main():
     if opts.browser == "firefox":
         chrome = Firefox(opts.firefox, profile, ROOT / "dist" / "firefox")
     else:
-        chrome = Chrome(opts.binary, profile)
+        chrome = Chrome(opts.binary, profile, tuple(map(int, opts.size.split("x"))))
     results = []
 
     def check(name, fn):
@@ -491,6 +495,12 @@ def main():
             ev("T.q('.cond .ac li').dispatchEvent(new MouseEvent('mousedown', {bubbles: true})); true")
             wait("T.q('[data-btext]').value.includes(`'partner_id.country_id', 'in'`)")
         check("builder: field path drill-down and record picker", builder_visual)
+        if opts.screenshot:
+            ev("T.q('.cond .ac input').blur(); true")
+            time.sleep(0.4)
+            wait("T.q('[data-bcount]').textContent !== '0' && T.q('[data-bcount]').textContent !== '…'", timeout=10)
+            time.sleep(0.6)
+        shot("builder")
 
         def explain():
             # explain a quotation against the "sale & > 1000" filter added above
@@ -607,7 +617,7 @@ def main():
             defaults = ev("T.qa('.facets')[0].textContent")
             assert len(initial_facets) == 0 or defaults, "defaults are listed"
             # a date filter period, for the screenshot
-            ev("const b = T.q('.preset-opt .chip'); if (b) b.click(); true")
+            ev("const b = T.qa('.preset-opt .chip').find(c => /^(This Year|2026)$/.test(c.textContent)) || T.q('.preset-opt .chip'); if (b) b.click(); true")
             time.sleep(1.2)
             shot("presets")
             # clear / reset are on the Filters tab too

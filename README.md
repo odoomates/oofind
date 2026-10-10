@@ -74,12 +74,19 @@ python3 tests/e2e.py --url http://127.0.0.1:8069 --db <db with Sales + demo data
 python3 tests/e2e.py --browser firefox --url … --db …   # same suite in headless Firefox (WebDriver BiDi)
 python3 tools/build.py                           # dist/chrome, dist/firefox + store zips
 python3 tools/make_icons.py                      # regenerate icons (Pillow)
+python3 tools/make_store_images.py               # store promo tiles (Pillow)
+python3 tests/e2e.py … --size 1280x800 --screenshot store/screenshots/s   # store screenshots
 ```
 
 Load `dist/chrome` with *chrome://extensions → Load unpacked*, or `dist/firefox` with
 *about:debugging → Load Temporary Add-on*. The root folder also loads unpacked as-is.
 
 Requires Chrome 95+ or Firefox 128+ (`scripting.executeScript` with `world: "MAIN"`).
+
+## Publishing
+
+Listing texts, permission justifications, reviewer notes, screenshots and promo tiles for the
+Chrome Web Store and Firefox Add-ons are in [`store/`](store/LISTING.md).
 
 ## License
 
