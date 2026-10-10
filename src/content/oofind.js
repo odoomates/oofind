@@ -1,4 +1,4 @@
-/* OoFind: visual search panel for Odoo 19+.
+/* OoFind: visual search panel for Odoo 17+.
  *
  * Injected on demand (toolbar button / Alt+Shift+F) into the active tab. Draws
  * a docked panel in a shadow root. Data comes from the page's own Odoo session
@@ -98,6 +98,55 @@
     return rpc(`/web/dataset/call_kw/${model}/${method}`, { model, method, args, kwargs: { ...kwargs, context } });
   }
 
+  /**
+   * Grouped counts and aggregates, in the shape of Odoo 19's formatted_read_group:
+   * rows with `group` values ([raw, label] for relations and dates), `__count`, `field:agg`
+   * keys and `__extra_domain` (the group's own condition). Odoo 17/18 only have read_group,
+   * so its results are translated: aliases for aggregates, __range for date groups.
+   */
+  async function readGroup(model, domain, { groupby = [], aggregates = ["__count"], order = null, limit = null } = {}) {
+    if (state.major === null || state.major >= 19) {
+      return orm(model, "formatted_read_group", [domain], { groupby, aggregates, order, limit });
+    }
+    const alias = {};
+    const fields = ["__count"];
+    for (const a of aggregates) {
+      if (a === "__count") continue;
+      const [f, fn] = a.split(":");
+      const key = `oo_${f}_${fn}`;
+      alias[key] = a;
+      fields.push(`${key}:${fn}(${f})`);
+    }
+    const orderby = order ? order.replace(/(\w+):\w+/g, "$1") : false;
+    const rows = await orm(model, "read_group", [domain, fields, groupby], { lazy: false, orderby, limit: limit || null });
+    const fieldsOfModel = await fieldsOf(model);
+    return rows.map((row) => {
+      const out = { __count: row.__count };
+      for (const [key, a] of Object.entries(alias)) out[a] = row[key];
+      const extra = [];
+      for (const gb of groupby) {
+        const [fname, granularity] = gb.split(":");
+        let value = row[gb];
+        if (granularity || (fieldsOfModel[fname] && D.DATES.has(fieldsOfModel[fname].type))) {
+          const range = row.__range && row.__range[gb];
+          if (range) {
+            extra.push([[fname, ">=", range.from], [fname, "<", range.to]]);
+            value = [range.from, value];
+          } else {
+            extra.push([[fname, "=", false]]);
+            value = false;
+          }
+        } else {
+          const raw = Array.isArray(value) ? value[0] : value;
+          extra.push([[fname, "=", raw === undefined ? false : raw]]);
+        }
+        out[gb] = value;
+      }
+      out.__extra_domain = D.andDomains(...extra);
+      return out;
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // page bridge
   let bridgeSeq = 0;
@@ -155,6 +204,7 @@
     history: [],
     favorites: null,
     busy: 0,
+    major: null, // Odoo major version (17, 18, 19…)
   };
 
   // ---------------------------------------------------------------------------
@@ -463,9 +513,10 @@
         const ctx = await bridge("context");
         state.ctx = ctx;
         const major = versionMajor(ctx.version || (state.session && state.session.server_version_info));
-        if (major !== null && major < 19) {
+        state.major = major;
+        if (major !== null && major < 17) {
           ctx.available = false;
-          ctx.reason = `OoFind needs Odoo 19 or later (this is Odoo ${major}).`;
+          ctx.reason = `OoFind needs Odoo 17 or later (this is Odoo ${major}).`;
         }
         if (!ctx.available) {
           whereEl.textContent = state.session ? state.session.db || location.host : location.host;
@@ -744,7 +795,7 @@
     const domain = countDomain(name);
     const key = JSON.stringify([state.ctx.resModel, groupby, domain, extra]);
     if (!state.valueCache.has(key)) {
-      state.valueCache.set(key, orm(state.ctx.resModel, "formatted_read_group", [domain], {
+      state.valueCache.set(key, readGroup(state.ctx.resModel, domain, {
         groupby: [groupby], aggregates: ["__count"], order: extra.order || "__count desc", limit: extra.limit || null,
       }));
     }
@@ -820,13 +871,13 @@
           const found = await orm(field.relation, "name_search", [], { name: q, limit: 15 });
           const ids = found.map(([id]) => id);
           const counts = ids.length
-            ? await orm(state.ctx.resModel, "formatted_read_group", [D.andDomains(countDomain(name), [[name, "in", ids]])], { groupby: [name], aggregates: ["__count"] })
+            ? await readGroup(state.ctx.resModel, D.andDomains(countDomain(name), [[name, "in", ids]]), { groupby: [name] })
             : [];
           const byId = new Map(counts.map((g) => [Array.isArray(g[name]) ? g[name][0] : g[name], g.__count]));
           draw(found.map(([id, label]) => ({ id: JSON.stringify(id), label, count: byId.get(id) || 0, domain: [[name, "=", id]] })));
         } else {
-          const res = await orm(state.ctx.resModel, "formatted_read_group", [D.andDomains(countDomain(name), [[name, "ilike", q]])], {
-            groupby: [name], aggregates: ["__count"], order: "__count desc", limit: 20,
+          const res = await readGroup(state.ctx.resModel, D.andDomains(countDomain(name), [[name, "ilike", q]]), {
+            groupby: [name], order: "__count desc", limit: 20,
           });
           const rows = res.map((g) => ({ id: groupId(g[name]), label: groupLabel(g[name], field), count: g.__count, domain: g.__extra_domain }));
           // "contains" as a single value
@@ -925,7 +976,7 @@
     const chips = h("div", { class: "chips" });
     el.append(chips);
     const domain = countDomain(name);
-    orm(state.ctx.resModel, "formatted_read_group", [domain], { groupby: [], aggregates: [`${name}:min`, `${name}:max`, `${name}:sum`, "__count"] })
+    readGroup(state.ctx.resModel, domain, { aggregates: [`${name}:min`, `${name}:max`, `${name}:sum`, "__count"] })
       .then(([g]) => {
         if (!g || g[`${name}:min`] === undefined || g[`${name}:min`] === null) {
           info.textContent = "No values in the current results.";
@@ -1474,7 +1525,7 @@
           items = [[Number(q.replace("#", "")), `Record #${q.replace("#", "")}`]];
         } else {
           // search outside the current filters (that's the point) and include archived records
-          items = await orm(ctx.resModel, "name_search", [], { name: q, domain: [], limit: 10, context: { active_test: false } });
+          items = await orm(ctx.resModel, "name_search", [], { name: q, limit: 10, context: { active_test: false } });
         }
         show();
       } catch (e) {
@@ -1860,9 +1911,11 @@
   async function loadFavorites() {
     const ctx = state.ctx;
     try {
-      state.favorites = await orm("ir.filters", "search_read", [[["model_id", "=", ctx.resModel]]], {
-        fields: ["name", "domain", "user_ids", "is_default", "action_id"], order: "name",
+      const userField = "user_ids" in (await fieldsOf("ir.filters")) ? "user_ids" : "user_id";
+      const rows = await orm("ir.filters", "search_read", [[["model_id", "=", ctx.resModel]]], {
+        fields: ["name", "domain", userField, "is_default", "action_id"], order: "name",
       });
+      state.favorites = rows.map((f) => ({ ...f, user_ids: userField === "user_ids" ? f.user_ids : f.user_id ? [f.user_id[0]] : [] }));
     } catch (e) {
       state.favorites = [];
       fail(e);

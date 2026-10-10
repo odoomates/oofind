@@ -1,4 +1,4 @@
-"""End-to-end test against a real Odoo server (19+).
+"""End-to-end test against a real Odoo server (17+).
 
 Opens Odoo in headless Chrome, logs in, injects the bridge into the page world
 and the panel into an isolated world exactly like the background's
@@ -329,7 +329,7 @@ def main():
                 {"db": opts.db, "login": opts.login, "password": opts.password})}}})}})
             .then(r => r.json()).then(r => r.result ? r.result.uid : JSON.stringify(r.error))""")
         assert isinstance(auth, int), f"login failed: {auth}"
-        chrome.navigate(f"{opts.url}/odoo/action-sale.action_orders")
+        chrome.navigate(f"{opts.url}/web#action=sale.action_orders")  # classic URL: Odoo 17 needs it, 18+ redirect it
         chrome.wait("document.querySelectorAll('.o_data_row').length > 0", timeout=60)
         initial_facets = chrome.evaluate("[...document.querySelectorAll('.o_searchview_facet')].map(f => f.textContent.replace(/\\s+/g, ' ').trim())")
         # start from a clean search bar
@@ -498,7 +498,10 @@ def main():
         if opts.screenshot:
             ev("T.q('.cond .ac input').blur(); true")
             time.sleep(0.4)
-            wait("T.q('[data-bcount]').textContent !== '0' && T.q('[data-bcount]').textContent !== '…'", timeout=10)
+            try:  # cosmetic: let the count settle before the screenshot
+                wait("T.q('[data-bcount]').textContent !== '…'", timeout=10)
+            except TimeoutError:
+                pass
             time.sleep(0.6)
         shot("builder")
 

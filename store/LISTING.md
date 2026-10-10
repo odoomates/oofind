@@ -13,12 +13,12 @@ Upload packages are built with `python3 tools/build.py`:
 
 **Short description** (Chrome summary, max 132 chars; AMO summary, max 250):
 
-> Visual filters with live counts, a domain workbench and 'why isn't this record here?' explanations for Odoo 19+.
+> Visual filters with live counts, a domain workbench and 'why isn't this record here?' explanations for Odoo 17+.
 
 **Full description:**
 
 ```
-OoFind adds a visual search panel to Odoo 19 and later. Press Alt+Shift+F (or click the toolbar button) on any list, kanban, pivot, graph or form view.
+OoFind adds a visual search panel to Odoo 17, 18, 19 and later. Press Alt+Shift+F (or click the toolbar button) on any list, kanban, pivot, graph or form view.
 
 FILTERS: ONE CLICK, NO TYPING
 • Value bars with record counts for status, selection, customer, salesperson, tags and yes/no fields
@@ -115,7 +115,7 @@ One-time: sign in with a Firefox account (free).
 
 **Notes to reviewer:**
 ```
-OoFind only works on an Odoo 19+ web client (https://www.odoo.com/trial gives a free instance, or runbot.odoo.com).
+OoFind only works on an Odoo 17+ web client (https://www.odoo.com/trial gives a free instance, or runbot.odoo.com).
 To test: log in to Odoo, open Sales > Orders (or Contacts), click the OoFind toolbar button (or Alt+Shift+F).
 
 - The panel is injected on demand with scripting.executeScript (activeTab only).
